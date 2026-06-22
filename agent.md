@@ -1,6 +1,6 @@
 # DPP EVM Demo Progress Log
 
-Last updated: 2026-06-21
+Last updated: 2026-06-22
 
 ## Current Status
 
@@ -9,7 +9,8 @@ path:
 
 `factory-endpoint.html` → local Pinata upload proxy → real IPFS URI → injected
 browser wallet → Sepolia check/switch → `SimpleDPPNFT.mintDPP()` → confirmed
-transaction hash and parsed token ID in the existing chain-status UI.
+transaction → backend IPFS readback → metadata hash verification → polished DPP
+Passport in the existing chain-status UI.
 
 The Sepolia deployment is now wired into the frontend:
 
@@ -101,6 +102,47 @@ CID. If the local upload backend fails, the frontend stops before
 `contract.mintDPP()` and shows a readable error. The mock URI is reachable only
 through the explicit `USE_MOCK_IPFS === true` branch.
 
+## Progress Entry: Verified IPFS DPP Passport
+
+On 2026-06-22, the confirmed `上鏈狀態` page became a Passport-first metadata
+viewer:
+
+```text
+confirmed tokenURI
+→ GET http://localhost:3001/fetch-metadata
+→ trusted IPFS gateway
+→ stableStringify(metadata)
+→ keccak256(canonical JSON)
+→ compare with minted metadataHash
+→ render DPP Passport
+```
+
+The backend accepts `ipfs://CID`, `ipfs://CID/path`, and HTTPS gateway-style
+`/ipfs/CID/path` inputs. It extracts only the CID and path, rebuilds the request
+on `PINATA_GATEWAY` or the public fallback gateway, and aborts gateway reads
+after 10 seconds. It does not require `PINATA_JWT` for read-only metadata
+fetches and does not act as a general URL proxy.
+
+The Passport keeps the transaction timeline and presents:
+
+- Product / order overview
+- Public production data
+- Locked private fields
+- Attributes / certificates
+- Chain proof
+- IPFS proof
+- Metadata hash verification
+- Collapsed `Developer / Raw JSON`
+
+The five runtime states are `loading`, `verified-ipfs`, `hash-mismatch`,
+`local-cache-fallback`, and `unavailable`. A hash mismatch remains an integrity
+warning and never triggers localStorage substitution. localStorage is attempted
+only when IPFS fetching fails and is labeled:
+
+```text
+Local cache fallback — not IPFS source data
+```
+
 ## Files Changed
 
 - `factory-endpoint.html`
@@ -114,17 +156,22 @@ through the explicit `USE_MOCK_IPFS === true` branch.
     `ethers.Contract.mintDPP()` transaction flow.
   - Added real pending/confirmed/error states, Sepolia Etherscan links, and
     `DPPMinted` event parsing.
+  - Added IPFS-first metadata readback, canonical hash comparison, all five
+    Passport states, and a structured Passport renderer.
+  - Moved raw and canonical JSON into a collapsed developer section.
 - `contracts/SimpleDPPNFT.sol`
   - Added a minimal OpenZeppelin `ERC721URIStorage` contract.
   - Added `DPPRecord`, `mintDPP`, record storage, and `DPPMinted`.
 - `tests/dpp-demo.test.mjs`
   - Tests the Solidity/frontend surface, canonical JSON, both IPFS modes,
-    wallet switching, mint confirmation, caching, and event parsing.
+    wallet switching, mint confirmation, Passport states, mismatch protection,
+    caching, and Passport rendering.
 - `server.js`
   - Added the local Express proxy for Pinata `pinJSONToIPFS`.
+  - Added safe, timeout-bound IPFS metadata readback through a trusted gateway.
 - `tests/ipfs-server.test.mjs`
-  - Tests missing-JWT rejection and mocked Pinata success without external
-    requests.
+  - Tests uploads plus token URI normalization, SSRF rejection, path
+    preservation, JWT-free reads, gateway errors, and timeout behavior.
 - `package.json`, `package-lock.json`, `.env.example`
   - Added the minimal backend runtime and configuration template.
 - `docs/superpowers/specs/2026-06-18-static-evm-dpp-demo-design.md`
@@ -197,11 +244,20 @@ Readable messages are provided for missing wallets, rejected requests, failed
 network switching, missing contract configuration, and failed transactions.
 Full errors are logged to the browser console.
 
-### Submitted Metadata View and Demo Cache
+### Verified DPP Passport and Demo Cache
 
-After the transaction is submitted, the chain-status page displays the generated
-DPP metadata as pretty JSON. A collapsible section displays the canonical JSON
-used to calculate `metadataHash`.
+After confirmation, the chain-status page keeps the transaction timeline and
+loads the minted `tokenURI` through the backend. The exact same
+`stableStringify()` used during minting canonicalizes the fetched JSON:
+
+```js
+ethers.keccak256(ethers.toUtf8Bytes(stableStringify(fetchedMetadata)))
+```
+
+The result is compared with the minted `metadataHash`. Matching IPFS data is
+shown as verified. A mismatch remains visible as an integrity warning and does
+not use cache substitution. Raw metadata and canonical JSON are available only
+inside the collapsed `Developer / Raw JSON` section.
 
 After confirmation, if `DPPMinted` yields a token ID, the frontend saves a
 token-scoped cache entry:
@@ -214,18 +270,20 @@ The cache is written through `saveMintedMetadataCache()` and can be read through
 `loadMintedMetadataCache()`. localStorage errors are logged but do not change a
 confirmed blockchain transaction into a failed mint.
 
-Future “My DPP NFTs” metadata reading should use this priority:
+Passport metadata uses this priority:
 
 1. Read `tokenURI` and `dppRecords` from the chain.
-2. Fetch metadata through a real IPFS/Arweave token URI.
-3. If the IPFS fetch fails or the URI is mocked, try the token-scoped
-   localStorage cache.
-4. If neither source is available, show a metadata-unavailable message.
+2. Fetch metadata through the backend from the real IPFS token URI.
+3. Verify the fetched JSON against the minted `metadataHash`.
+4. Only if the IPFS request fails, try the token-scoped localStorage cache.
+5. If neither source is available, show a metadata-unavailable message while
+   retaining chain proof.
 
 ### Local Pinata Upload Backend
 
-`server.js` provides `GET /health` and `POST /upload-metadata`. The upload
-endpoint sends metadata to Pinata with CID version 1 and returns:
+`server.js` provides `GET /health`, `POST /upload-metadata`, and
+`GET /fetch-metadata`. The upload endpoint sends metadata to Pinata with CID
+version 1 and returns:
 
 ```json
 {
@@ -238,6 +296,21 @@ endpoint sends metadata to Pinata with CID version 1 and returns:
 The backend rejects uploads when `PINATA_JWT` is missing. Detailed errors stay
 in the server console; frontend responses do not expose the JWT or authorization
 header.
+
+The read endpoint accepts an IPFS token URI, safely normalizes its CID and
+optional path, fetches JSON through the configured gateway, and returns:
+
+```json
+{
+  "metadata": {},
+  "source": "ipfs",
+  "tokenURI": "ipfs://bafy.../optional/path.json",
+  "gatewayURL": "https://.../ipfs/bafy.../optional/path.json",
+  "fetchedAt": "..."
+}
+```
+
+Readback does not require `PINATA_JWT`.
 
 ## Still Mocked
 
@@ -294,6 +367,15 @@ Expected success:
   "tokenURI": "ipfs://..."
 }
 ```
+
+Test metadata readback with:
+
+```bash
+curl -sS "http://localhost:3001/fetch-metadata?tokenURI=ipfs://YOUR_CID"
+```
+
+The response should contain `metadata`, `source: "ipfs"`, the normalized
+`tokenURI`, trusted `gatewayURL`, and `fetchedAt`.
 
 ### Run the static frontend
 
@@ -378,11 +460,11 @@ Automated command:
 npm test
 ```
 
-Result on 2026-06-21:
+Result on 2026-06-22:
 
 ```text
-tests 20
-pass 20
+tests 34
+pass 34
 fail 0
 ```
 
@@ -403,9 +485,21 @@ Additional evidence:
 - The controlled confirmed-mint flow preserved the generated metadata and
   canonical JSON in `state.chain`.
 - The cache helper round-tripped the complete required local-only cache record.
-- The chain-status UI rendered both pretty metadata JSON and canonical JSON.
+- The chain-status UI rendered the Passport loading state, verified IPFS
+  Passport, integrity mismatch warning, local-cache fallback, and unavailable
+  state while retaining the transaction timeline and chain proof.
+- The verified Passport rendered overview, production data, locked fields,
+  attributes/certificates, chain proof, IPFS proof, hash verification, and a
+  collapsed developer section.
+- Raw and canonical JSON appeared only inside `Developer / Raw JSON`.
 - Frontend real mode posted metadata to `/upload-metadata` and passed the
   returned IPFS URI into `mintDPP`.
+- After confirmation, the frontend requested `/fetch-metadata`, canonicalized
+  the returned document with the mint-time `stableStringify()`, and compared its
+  keccak256 hash with the minted metadata hash.
+- A controlled mismatch remained `hash-mismatch` and did not read localStorage.
+- A controlled IPFS failure used the token cache only when available and
+  displayed `Local cache fallback — not IPFS source data`.
 - Confirmed real-mode state and result UI contain the backend-returned CID,
   token URI, gateway URL, upload endpoint, and `upload succeeded` status.
 - A simulated real-backend connection failure left the transaction hash empty
@@ -419,17 +513,24 @@ Additional evidence:
   `bafkreigs4bjamxyzkxnmnppd37twwbvsr5qa5z535zalox5yujrbdoisu4` through the
   configured local proxy.
 - The configured gateway returned HTTP `200` for the uploaded metadata.
+- Live `GET /fetch-metadata` returned the previously uploaded
+  `{"name":"DPP test","description":"hello pinata"}` document with source,
+  normalized token URI, trusted gateway URL, and fetch timestamp.
+- A live non-IPFS HTTPS input returned HTTP `400`, confirming the endpoint did
+  not proxy the supplied origin.
 - A fresh project-root static server returned the updated
   `factory-endpoint.html`; the browser visibly showed build
-  `2026-06-21-real-ipfs-diagnostics-v1`, `IPFS mode: real backend`, the
-  localhost upload endpoint, and `Backend status: not tested`.
+  `2026-06-22-ipfs-passport-v1`.
 - The fresh browser page produced no console errors.
 - Secret scan matches were documentation, prohibitions, or test fixture text;
   no credential was found.
 
 The contract deployment is recorded from the project owner's successful
-Sepolia deployment. This debugging session did not submit another mint
-transaction because wallet approval remains an explicit user action.
+Sepolia deployment. This Passport session did not submit another mint
+transaction because wallet approval remains an explicit user action. The
+browser URL policy blocked a standalone data-URL Passport preview, so all five
+Passport bodies were verified through controlled DOM tests while the actual
+project-root page received the live browser syntax and console check.
 
 ## Validation Checklist
 
@@ -451,6 +552,11 @@ transaction because wallet approval remains an explicit user action.
       the real upload fails.
 - [x] Backend rejects upload when `PINATA_JWT` is missing.
 - [x] Backend maps a mocked Pinata CID to `ipfs://CID`.
+- [x] Backend safely normalizes `ipfs://CID/path` and HTTPS `/ipfs/CID/path`
+      inputs while preserving the path.
+- [x] Backend rejects unsupported and non-IPFS URLs.
+- [x] Backend metadata reads do not require `PINATA_JWT`.
+- [x] Backend metadata reads abort after the configured timeout.
 - [x] Frontend targets deployed contract
       `0x24aeeb254a48820b5b0bdcbdce980a725535718f`.
 - [x] `mintDPP` is called on the configured deployed address in the controlled
@@ -459,7 +565,16 @@ transaction because wallet approval remains an explicit user action.
 - [x] UI displays a token ID parsed from `DPPMinted`.
 - [x] `state.chain` retains submitted metadata and canonical JSON.
 - [x] Confirmed mints with a parsed token ID save the localStorage demo cache.
-- [x] UI displays submitted pretty JSON and canonical hash input separately.
+- [x] Confirmed mint starts IPFS-first Passport loading.
+- [x] Matching IPFS metadata produces `verified-ipfs`.
+- [x] Mismatching IPFS metadata produces `hash-mismatch` without cache
+      substitution.
+- [x] IPFS failure produces `local-cache-fallback` only when cache data exists.
+- [x] Missing IPFS and cache data produces `unavailable` while retaining chain
+      proof.
+- [x] UI renders the polished DPP Passport as the primary confirmed content.
+- [x] UI keeps pretty JSON and canonical hash input collapsed under
+      `Developer / Raw JSON`.
 - [x] UI explains that IPFS plus metadataHash is the source of truth,
       localStorage is a convenience cache, and full JSON is not on-chain.
 - [x] No private key, mnemonic, API key, or service secret is present.
@@ -480,6 +595,8 @@ transaction because wallet approval remains an explicit user action.
 - Real minting requires an injected EVM wallet and Sepolia test ETH.
 - ethers.js is loaded from a CDN, so first load requires internet access.
 - Real upload requires the local backend and a valid Pinata JWT.
+- Passport IPFS readback requires the local backend and a reachable configured
+  or public gateway, but does not require the Pinata JWT.
 - The explicit mock URI does not resolve to persistent metadata.
 - The localStorage metadata cache disappears if site data is cleared and cannot
   recover metadata on another browser/device.
@@ -495,6 +612,7 @@ transaction because wallet approval remains an explicit user action.
    verify the visible runtime diagnostics before signing.
 2. Run one new funded-wallet mint in `real backend` mode and verify the gateway
    metadata against `metadataHash` and the Etherscan transaction.
-3. Add the future “My DPP NFTs” read flow with IPFS and local-cache fallback.
+3. Add the future “My DPP NFTs” collection scanner using the verified Passport
+   read path.
 4. Replace demo encryption with an explicit cryptographic design.
 5. Add issuer access control and contract tests before production use.
