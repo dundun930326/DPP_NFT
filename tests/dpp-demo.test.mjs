@@ -168,6 +168,7 @@ function installControlledMintScenario(
   let uploadedMetadata = null;
   let metadataFetchCount = 0;
   let mintCallCount = 0;
+  let resolveMetadataFetch = null;
 
   context.fetch = async (url, options) => {
     if (url === "http://localhost:3001/upload-metadata") {
@@ -197,7 +198,7 @@ function installControlledMintScenario(
         readMode === "mismatch"
           ? { ...uploadedMetadata, name: "Tampered DPP" }
           : uploadedMetadata;
-      return {
+      const readResponse = {
         ok: true,
         status: 200,
         async json() {
@@ -210,6 +211,12 @@ function installControlledMintScenario(
           };
         },
       };
+      if (readMode === "deferred") {
+        return new Promise((resolve) => {
+          resolveMetadataFetch = () => resolve(readResponse);
+        });
+      }
+      return readResponse;
     }
     throw new Error(`Unexpected fetch URL: ${url}`);
   };
@@ -275,6 +282,10 @@ function installControlledMintScenario(
     },
     get mintCallCount() {
       return mintCallCount;
+    },
+    resolveMetadataFetch() {
+      assert.equal(typeof resolveMetadataFetch, "function");
+      resolveMetadataFetch();
     },
   };
 }
@@ -816,10 +827,31 @@ test("doSign preserves submitted metadata, caches it, and renders the confirmed 
   assert.match(elements.get("main").innerHTML, /metadata was uploaded through the local Pinata proxy/i);
   assert.doesNotMatch(elements.get("main").innerHTML, /bafy-demo-cid/);
   assert.doesNotMatch(elements.get("main").innerHTML, /IPFS upload 仍為 mock/);
+  const output = elements.get("main").innerHTML;
+  assert.match(output, /DPP Passport/);
+  assert.match(output, /Product \/ order overview/);
+  assert.match(output, /Public production data/);
+  assert.match(output, /Locked private fields/);
+  assert.match(output, /Attributes \/ certificates/);
+  assert.match(output, /Chain proof/);
+  assert.match(output, /IPFS proof/);
+  assert.match(output, /Metadata hash verification/);
+  assert.match(output, /✅ Metadata hash verified/);
+  assert.match(output, /Developer \/ Raw JSON/);
+  const developerIndex = output.indexOf(
+    "<summary>Developer / Raw JSON</summary>",
+  );
+  const rawPreIndex = output.indexOf('<pre class="code">');
+  assert.ok(developerIndex >= 0);
+  assert.ok(rawPreIndex > developerIndex);
+  assert.doesNotMatch(
+    output.slice(0, developerIndex),
+    /<pre class="code">/,
+  );
 });
 
 test("confirmed mint preserves IPFS hash mismatch without cache substitution", async () => {
-  const { context } = createApplicationContext();
+  const { context, elements } = createApplicationContext();
   const scenario = installControlledMintScenario(context, {
     readMode: "mismatch",
   });
@@ -843,10 +875,13 @@ test("confirmed mint preserves IPFS hash mismatch without cache substitution", a
   assert.equal(chainState.metadataSource, "ipfs");
   assert.equal(chainState.metadataVerification.matches, false);
   assert.equal(context.cacheReadCount, 0);
+  assert.match(elements.get("main").innerHTML, /⚠️ Metadata hash mismatch/);
+  assert.match(elements.get("main").innerHTML, /Chain proof/);
+  assert.match(elements.get("main").innerHTML, /等待鏈上確認/);
 });
 
 test("confirmed mint uses clearly labeled local cache only after IPFS failure", async () => {
-  const { context } = createApplicationContext();
+  const { context, elements } = createApplicationContext();
   const scenario = installControlledMintScenario(context, {
     readMode: "failure",
   });
@@ -864,6 +899,12 @@ test("confirmed mint uses clearly labeled local cache only after IPFS failure", 
   assert.equal(chainState.metadataSource, "local-cache-fallback");
   assert.equal(chainState.metadataVerification.matches, true);
   assert.match(chainState.metadataFetchError, /metadata 服務|unavailable/i);
+  assert.match(
+    elements.get("main").innerHTML,
+    /Local cache fallback — not IPFS source data/,
+  );
+  assert.match(elements.get("main").innerHTML, /Cache hash matches minted hash/);
+  assert.doesNotMatch(elements.get("main").innerHTML, /verified IPFS data/i);
 });
 
 test("confirmed mint keeps chain proof and marks Passport unavailable when no source exists", async () => {
@@ -886,6 +927,36 @@ test("confirmed mint keeps chain proof and marks Passport unavailable when no so
   assert.equal(chainState.passportStatus, "unavailable");
   assert.equal(chainState.tx, "0xfeed1234");
   assert.match(elements.get("main").innerHTML, /0xfeed1234/);
+  assert.match(elements.get("main").innerHTML, /Passport metadata unavailable/);
+  assert.match(elements.get("main").innerHTML, /Chain proof/);
+  assert.match(elements.get("main").innerHTML, /等待鏈上確認/);
+});
+
+test("confirmed page keeps the timeline visible while Passport metadata loads", async () => {
+  const { context, elements } = createApplicationContext();
+  const scenario = installControlledMintScenario(context, {
+    readMode: "deferred",
+  });
+
+  vm.runInContext(inlineApplicationSource(), context);
+  await vm.runInContext("refreshWalletState(false)", context);
+  const signingPromise = vm.runInContext("doSign()", context);
+  for (let attempt = 0; attempt < 5 && scenario.metadataFetchCount === 0; attempt += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+
+  const loadingState = vm.runInContext(
+    "JSON.parse(JSON.stringify(state.chain))",
+    context,
+  );
+  assert.equal(loadingState.status, "confirmed");
+  assert.equal(loadingState.passportStatus, "loading");
+  assert.match(elements.get("main").innerHTML, /Loading verified DPP Passport/);
+  assert.match(elements.get("main").innerHTML, /等待鏈上確認/);
+  assert.match(elements.get("main").innerHTML, /Chain proof/);
+
+  scenario.resolveMetadataFetch();
+  await signingPromise;
 });
 
 test("real upload failure stops before contract minting", async () => {

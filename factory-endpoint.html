@@ -105,6 +105,33 @@
   .timeline .dot{width:22px;height:22px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;font-size:12px;background:var(--lineSoft);color:var(--muted)}
   .timeline li.done .dot{background:var(--goodBg);color:var(--good)}
   .timeline li.cur .dot{background:var(--accent);color:#fff}
+  /* DPP Passport */
+  .passport{display:grid;gap:14px;margin-top:16px}
+  .passport-hero{padding:22px;background:linear-gradient(135deg,#eef0fb,#fff);border:1px solid #d9ddf6;border-radius:16px;box-shadow:var(--shadow)}
+  .passport-hero h2{font-size:23px;margin:5px 0 2px}.passport-hero p{max-width:760px}
+  .passport-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+  .passport-section{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:16px 18px;box-shadow:var(--shadow);min-width:0}
+  .passport-section.wide{grid-column:1/-1}
+  .passport-section h3{margin:0 0 10px;font-size:16px}
+  .passport-kv{display:grid;grid-template-columns:minmax(120px,.8fr) minmax(0,1.4fr);gap:12px;padding:8px 0;border-top:1px solid var(--lineSoft);align-items:start}
+  .passport-kv:first-of-type{border-top:0}.passport-kv .label{color:var(--muted);font-size:12px;font-weight:700}.passport-kv .value{overflow-wrap:anywhere}
+  .passport-metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+  .passport-metric{padding:12px;border:1px solid var(--lineSoft);border-radius:11px;background:var(--surface2);min-width:0}
+  .passport-metric .label{font-size:11px;color:var(--muted);font-weight:700}.passport-metric .value{font-weight:750;overflow-wrap:anywhere}
+  .passport-attributes{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px}
+  .passport-attribute{padding:12px;border:1px solid var(--lineSoft);border-radius:11px;background:var(--surface2)}
+  .passport-attribute .trait{font-size:12px;color:var(--muted);font-weight:700}.passport-attribute .value{margin:5px 0 9px;overflow-wrap:anywhere}
+  .passport-badge{display:inline-flex;border-radius:999px;padding:3px 9px;font-size:11px;font-weight:800;text-transform:lowercase}
+  .passport-badge.public{background:var(--goodBg);color:var(--good)}
+  .passport-badge.private,.passport-badge.encrypted{background:var(--jewelBg);color:var(--jewel)}
+  .passport-badge.neutral{background:var(--lineSoft);color:var(--soft)}
+  .passport-proof.good{border-color:#cfe6d4;background:var(--goodBg)}
+  .passport-proof.warn{border-color:#f0dcc0;background:var(--warnBg)}
+  .passport-locked{border-left:4px solid var(--jewel);background:var(--jewelBg)}
+  .passport-loading{min-height:150px;display:flex;align-items:center;justify-content:center;text-align:center;background:linear-gradient(110deg,var(--surface),var(--info),var(--surface));background-size:220% 100%;animation:passportPulse 1.8s ease-in-out infinite}
+  .passport-dev summary{cursor:pointer;font-weight:800;color:var(--accent)}
+  .passport-dev[open] summary{margin-bottom:12px}
+  @keyframes passportPulse{0%,100%{background-position:0 0}50%{background-position:100% 0}}
   .scbar{display:flex;gap:4px;align-items:center;flex-wrap:wrap;font-size:13px;margin:8px 0}
   .scbar .st{padding:4px 9px;border-radius:8px;background:var(--surface);border:1px solid var(--line);color:var(--muted)}
   .scbar .st.done{background:var(--goodBg);color:var(--good);border-color:#cfe6d4}
@@ -120,6 +147,7 @@
     .side{width:100%;min-height:0;position:static;border-right:0;border-bottom:1px solid var(--line);display:flex;overflow:auto}
     .nav{display:flex;gap:4px}.nav .grp{display:none}.nav a{white-space:nowrap;margin:0}
     main{padding:18px}
+    .passport-grid{grid-template-columns:1fr}.passport-kv{grid-template-columns:1fr;gap:2px}
   }
 </style>
 </head>
@@ -157,7 +185,7 @@ const SEPOLIA_CHAIN_HEX = '0xaa36a7';
 const USE_MOCK_IPFS = false;
 const IPFS_UPLOAD_ENDPOINT = 'http://localhost:3001/upload-metadata';
 const IPFS_METADATA_FETCH_ENDPOINT = 'http://localhost:3001/fetch-metadata';
-const FRONTEND_BUILD_ID = '2026-06-21-real-ipfs-diagnostics-v1';
+const FRONTEND_BUILD_ID = '2026-06-22-ipfs-passport-v1';
 const DPP_SCHEMA = 'dpp-dye-fnsh-v1';
 const DPP_ORDER = '#A2207';
 const DPP_STAGE = 'dye-fnsh';
@@ -706,6 +734,183 @@ function ipfsDiagnosticsHTML(chainState){
   </div>`;
 }
 
+function passportRows(object,emptyMessage='No data available.'){
+  const entries=object&&typeof object==='object'?Object.entries(object):[];
+  if(!entries.length) return `<p class="vis">${escapeHTML(emptyMessage)}</p>`;
+  return entries.map(([key,value])=>`<div class="passport-kv">
+    <div class="label">${escapeHTML(key)}</div>
+    <div class="value">${escapeHTML(typeof value==='object'?JSON.stringify(value):value)}</div>
+  </div>`).join('');
+}
+function passportMetrics(object,emptyMessage='No public production data available.'){
+  const entries=object&&typeof object==='object'?Object.entries(object):[];
+  if(!entries.length) return `<p class="vis">${escapeHTML(emptyMessage)}</p>`;
+  return `<div class="passport-metrics">${entries.map(([key,value])=>`<div class="passport-metric">
+    <div class="label">${escapeHTML(key)}</div>
+    <div class="value">${escapeHTML(typeof value==='object'?JSON.stringify(value):value)}</div>
+  </div>`).join('')}</div>`;
+}
+function passportAttributes(attributes){
+  if(!Array.isArray(attributes)||!attributes.length) return '<p class="vis">No attributes or certificates available.</p>';
+  return `<div class="passport-attributes">${attributes.map(attribute=>{
+    const rawVisibility=String(attribute?.visibility||'private').toLowerCase();
+    const visibility=['public','private','encrypted'].includes(rawVisibility)?rawVisibility:'neutral';
+    return `<div class="passport-attribute">
+      <div class="trait">${escapeHTML(attribute?.trait_type||'Unnamed trait')}</div>
+      <div class="value">${escapeHTML(attribute?.value??'—')}</div>
+      <span class="passport-badge ${visibility}">${escapeHTML(rawVisibility)}</span>
+    </div>`;
+  }).join('')}</div>`;
+}
+function passportURLLink(url,label){
+  if(!url||!/^https?:\/\//i.test(url)) return escapeHTML(url||'—');
+  return `<a href="${escapeHTML(url)}" target="_blank" rel="noopener noreferrer">${escapeHTML(label||url)} ↗</a>`;
+}
+function vChainProof(c){
+  const previousTokenId=c.fetchedMetadata?.dpp?.previousTokenId??DPP_PREVIOUS_TOKEN_ID;
+  return `<section class="passport-section">
+    <h3>Chain proof</h3>
+    <div class="passport-kv"><div class="label">Token ID</div><div class="value">${c.tokenId!==null&&c.tokenId!==undefined?'#'+escapeHTML(c.tokenId):'Event not parsed'}</div></div>
+    <div class="passport-kv"><div class="label">Transaction</div><div class="value">${c.tx?passportURLLink(`https://sepolia.etherscan.io/tx/${encodeURIComponent(c.tx)}`,c.tx):'Not submitted'}</div></div>
+    <div class="passport-kv"><div class="label">Contract</div><div class="value"><code>${escapeHTML(CONTRACT_ADDRESS)}</code></div></div>
+    <div class="passport-kv"><div class="label">Token URI</div><div class="value"><code>${escapeHTML(c.tokenURI||'—')}</code></div></div>
+    <div class="passport-kv"><div class="label">On-chain metadata hash</div><div class="value"><code>${escapeHTML(c.metadataHash||'—')}</code></div></div>
+    <div class="passport-kv"><div class="label">Previous token</div><div class="value">#${escapeHTML(previousTokenId)}</div></div>
+    <div class="passport-kv"><div class="label">Issuer</div><div class="value"><code>${escapeHTML(c.issuer||'—')}</code></div></div>
+    <div class="passport-kv"><div class="label">Created / confirmed</div><div class="value">${escapeHTML(c.time||'Awaiting confirmation')}</div></div>
+    <div class="passport-kv"><div class="label">Status</div><div class="value">${c.status==='confirmed'?'🟢 已確認 · 不可竄改':'⏳ 交易已送出，等待確認'}</div></div>
+  </section>`;
+}
+function vIPFSProof(c){
+  const source=c.metadataSource==='local-cache-fallback'
+    ?'Local cache fallback — not IPFS source data'
+    :(c.metadataSource||'unavailable');
+  const gatewayURL=c.metadataGatewayURL||c.gatewayURL||null;
+  return `<section class="passport-section">
+    <h3>IPFS proof</h3>
+    <div class="passport-kv"><div class="label">CID</div><div class="value"><code>${escapeHTML(c.cid||'—')}</code></div></div>
+    <div class="passport-kv"><div class="label">Gateway</div><div class="value">${passportURLLink(gatewayURL,gatewayURL)}</div></div>
+    <div class="passport-kv"><div class="label">Fetched at</div><div class="value">${escapeHTML(c.metadataFetchedAt||'—')}</div></div>
+    <div class="passport-kv"><div class="label">Source</div><div class="value">${escapeHTML(source)}</div></div>
+    <div class="passport-kv"><div class="label">Fetch status</div><div class="value">${escapeHTML(c.passportStatus||'not loaded')}</div></div>
+    ${c.metadataSource==='ipfs'?'<p class="vis">Metadata was uploaded through the local Pinata proxy and fetched back through the trusted backend gateway.</p>':''}
+  </section>`;
+}
+function vMetadataVerification(c){
+  const verification=c.metadataVerification;
+  let title='Metadata verification unavailable';
+  let cls='warn';
+  let detail='No metadata document was available to hash.';
+  if(c.passportStatus==='verified-ipfs'){
+    title='✅ Metadata hash verified';
+    cls='good';
+    detail='The IPFS metadata canonical hash matches the minted on-chain metadataHash.';
+  }else if(c.passportStatus==='hash-mismatch'){
+    title='⚠️ Metadata hash mismatch';
+    detail='The IPFS document does not match the minted metadataHash. Local cache substitution was not attempted.';
+  }else if(c.passportStatus==='local-cache-fallback'){
+    title=verification?.matches?'Cache hash matches minted hash':'Cache hash mismatch';
+    cls=verification?.matches?'good':'warn';
+    detail='Local cache fallback — not IPFS source data. This comparison does not verify IPFS availability or provenance.';
+  }
+  return `<section class="passport-section wide passport-proof ${cls}">
+    <h3>Metadata hash verification</h3>
+    <div class="t">${title}</div>
+    <p>${escapeHTML(detail)}</p>
+    <div class="passport-kv"><div class="label">Computed hash</div><div class="value"><code>${escapeHTML(verification?.computedHash||'—')}</code></div></div>
+    <div class="passport-kv"><div class="label">Minted / on-chain hash</div><div class="value"><code>${escapeHTML(verification?.expectedHash||c.metadataHash||'—')}</code></div></div>
+    <div class="passport-kv"><div class="label">Metadata source</div><div class="value">${escapeHTML(c.metadataSource||'unavailable')}</div></div>
+  </section>`;
+}
+function vDeveloperMetadata(c,metadata){
+  const canonicalJson=c.metadataVerification?.canonicalJson||c.canonicalJson||'';
+  return `<details class="passport-section wide passport-dev">
+    <summary>Developer / Raw JSON</summary>
+    <h3>本次送出的 DPP Metadata JSON</h3>
+    <pre class="code">${escapeHTML(JSON.stringify(metadata||{},null,2))}</pre>
+    <h3>Canonical JSON used for metadataHash</h3>
+    <pre class="code">${escapeHTML(canonicalJson)}</pre>
+    <h3>Upload diagnostics</h3>
+    ${ipfsDiagnosticsHTML(c)}
+    <h3>Fetch diagnostics</h3>
+    <div class="kv">Fetch endpoint:<code>${escapeHTML(IPFS_METADATA_FETCH_ENDPOINT)}</code></div>
+    <div class="kv">Passport status:<code>${escapeHTML(c.passportStatus||'not loaded')}</code></div>
+    <div class="kv">Fetch error:<code>${escapeHTML(c.metadataFetchError||'—')}</code></div>
+    <div class="kv">Cache note:<code>LOCAL_DEMO_CACHE_ONLY_NOT_ON_CHAIN</code></div>
+    <div class="kv">Cache key:<code>${escapeHTML(c.metadataCacheKey||'—')}</code></div>
+    <p class="vis">IPFS tokenURI and metadataHash are the source of truth pair. localStorage is only a convenience cache; the full JSON is not stored on-chain.</p>
+    <p class="vis">鏈上只保存 tokenURI、metadataHash 與 DPP record 欄位（schemaHash、orderHash、stage、previousTokenId、issuer、createdAt），不保存完整 JSON。</p>
+  </details>`;
+}
+function vDPPPassport(metadata,verification,c){
+  const dpp=metadata?.dpp||{};
+  const sourceLabel=c.passportStatus==='verified-ipfs'
+    ?'verified IPFS'
+    :(c.passportStatus==='hash-mismatch'?'IPFS integrity warning':'local cache fallback');
+  const sourceClass=c.passportStatus==='verified-ipfs'?'public':(c.passportStatus==='hash-mismatch'?'private':'neutral');
+  const stateNotice=c.passportStatus==='hash-mismatch'
+    ?'<div class="callout warn"><div class="t">⚠️ Metadata hash mismatch</div>The fetched IPFS metadata is shown for diagnosis but is not verified against the minted hash.</div>'
+    :(c.passportStatus==='local-cache-fallback'
+      ?'<div class="callout warn"><div class="t">Local cache fallback — not IPFS source data</div>IPFS was unavailable. This browser-local copy is shown only as a convenience fallback.</div>'
+      :'');
+  return `<div class="passport">
+    <section class="passport-hero">
+      <div class="row"><span class="eyebrow">DPP Passport</span><span class="right"></span><span class="passport-badge ${sourceClass}">${escapeHTML(sourceLabel)}</span></div>
+      <h2>${escapeHTML(metadata?.name||'Digital Product Passport')}</h2>
+      <p>${escapeHTML(metadata?.description||'No description supplied.')}</p>
+    </section>
+    ${stateNotice}
+    <div class="passport-grid">
+      <section class="passport-section wide">
+        <h3>Product / order overview</h3>
+        ${passportRows({
+          order:dpp.order??'—',
+          stage:dpp.stage??'—',
+          schema:dpp.schema??'—',
+          factoryDID:dpp.factoryDid??'—',
+          previousTokenId:dpp.previousTokenId??DPP_PREVIOUS_TOKEN_ID
+        })}
+      </section>
+      <section class="passport-section wide">
+        <h3>Public production data</h3>
+        ${passportMetrics(dpp.publicData)}
+      </section>
+      <section class="passport-section wide passport-locked">
+        <h3>Locked private fields</h3>
+        ${passportRows(dpp.encryptedData,'No locked private fields were included.')}
+        <p class="vis">Demo encryption placeholder only. Real production should use actual encryption / TEE / access-control flow.</p>
+      </section>
+      <section class="passport-section wide">
+        <h3>Attributes / certificates</h3>
+        ${passportAttributes(metadata?.attributes)}
+      </section>
+      ${vChainProof(c)}
+      ${vIPFSProof(c)}
+      ${vMetadataVerification(c)}
+      ${vDeveloperMetadata(c,metadata)}
+    </div>
+  </div>`;
+}
+function vPassportBody(c){
+  if(c.status!=='confirmed'){
+    return `<div class="passport-grid">${vChainProof(c)}</div>
+      <div class="callout info"><div class="t">⏳ Transaction pending</div>${escapeHTML(c.message||'Waiting for Sepolia confirmation…')}</div>`;
+  }
+  if(c.passportStatus==='loading'){
+    return `<div class="passport">
+      <section class="passport-section wide passport-loading"><div><h3>Loading verified DPP Passport</h3><p>Fetching metadata from IPFS and checking the minted metadata hash…</p></div></section>
+      <div class="passport-grid">${vChainProof(c)}</div>
+    </div>`;
+  }
+  if(c.passportStatus==='verified-ipfs'||c.passportStatus==='hash-mismatch'||c.passportStatus==='local-cache-fallback'){
+    return vDPPPassport(c.fetchedMetadata,c.metadataVerification,c);
+  }
+  return `<div class="passport">
+    <section class="passport-section wide passport-proof warn"><h3>Passport metadata unavailable</h3><p>${escapeHTML(c.metadataFetchError||'Metadata could not be loaded from IPFS or local cache.')}</p></section>
+    <div class="passport-grid">${vChainProof(c)}${vIPFSProof(c)}${vMetadataVerification(c)}${vDeveloperMetadata(c,null)}</div>
+  </div>`;
+}
+
 function vChain(){
   if(!state.chain){
     return `${stepper('chain')}<h1>上鏈狀態</h1>${ipfsDiagnosticsHTML(null)}<div class="callout info"><div class="t">🛈 尚未送出</div>請先在「加密與送出」完成簽署。<div class="row" style="margin-top:8px"><button class="btn" onclick="go('boundary')">前往送出 →</button></div></div>`;
@@ -720,39 +925,11 @@ function vChain(){
     ${li(3,'送出 mintDPP 交易')}
     ${li(4,'等待鏈上確認')}
   </ul>
-  ${ipfsDiagnosticsHTML(c)}
   ${c.error?`<div class="callout warn"><div class="t">⚠ Mint 未完成</div>${escapeHTML(c.error)}</div>`:''}
-  ${c.tx?`<div class="card">
-    <div class="kv">Token ID:<b>${c.tokenId!==null&&c.tokenId!==undefined?'#'+escapeHTML(c.tokenId):'事件未解析'}</b></div>
-    <div class="kv">交易雜湊:<code>${escapeHTML(c.tx)}</code> &nbsp;<a class="pill" href="https://sepolia.etherscan.io/tx/${encodeURIComponent(c.tx)}" target="_blank" rel="noopener noreferrer">Sepolia Etherscan ↗</a></div>
-    <div class="kv">時間戳:${escapeHTML(c.time||'等待確認')}</div>
-    <div class="kv">Token URI:${escapeHTML(c.tokenURI||'')}</div>
-    ${c.gatewayURL&&/^https?:\/\//i.test(c.gatewayURL)?`<div class="kv"><a class="pill" href="${escapeHTML(c.gatewayURL)}" target="_blank" rel="noopener noreferrer">查看 IPFS Metadata JSON ↗</a></div>`:''}
-    <div class="kv">Metadata 雜湊:${escapeHTML(c.metadataHash||'')}</div>
-    <div class="kv">前一段參考:weave token #1041</div>
-    <div class="kv" style="color:${c.status==='confirmed'?'var(--good)':'var(--accent)'}">狀態:${c.status==='confirmed'?'🟢 已確認 · 不可竄改':'⏳ 交易已送出,等待確認'}</div>
-    <div class="callout jewel" style="margin-top:10px"><div class="t">🔒 你保留的</div>本批加密欄位的鑰匙(在 TEE)。任何人想看,需走「驗證請求」由你放行。</div>
-    ${c.metadata?`
-      <h3>本次送出的 DPP Metadata JSON</h3>
-      <p class="vis">供人員檢視的 pretty JSON。</p>
-      <pre class="code">${escapeHTML(JSON.stringify(c.metadata,null,2))}</pre>
-      ${c.canonicalJson?`<details>
-        <summary><b>Canonical JSON used for metadataHash</b></summary>
-        <p class="vis">下列無空白、鍵值排序後的字串是 metadataHash 的實際輸入。</p>
-        <pre class="code">${escapeHTML(c.canonicalJson)}</pre>
-      </details>`:''}
-      <div class="callout info">
-        <div class="t">🛈 Metadata 儲存位置</div>
-        ${c.uploadMode==='mock'
-          ?'IPFS mode is mock. The full JSON exists only in the localStorage demo cache; the demo CID is not persistent metadata.'
-          :'Metadata was uploaded through the local Pinata proxy. IPFS tokenURI 與 metadataHash 是 metadata 的 source of truth；localStorage is only a convenience cache.'}
-        鏈上只保存 tokenURI、metadataHash 與 DPP record 欄位（schemaHash、orderHash、stage、previousTokenId、issuer、createdAt），不保存完整 JSON。
-        <div class="kv">Cache note:<code>LOCAL_DEMO_CACHE_ONLY_NOT_ON_CHAIN</code></div>
-        <div class="kv">Cache key:${escapeHTML(c.metadataCacheKey||'等待 tokenId 後建立 / localStorage 無法使用')}</div>
-      </div>
-    `:''}
-    ${c.status==='confirmed'?'<div class="row"><span class="right"></span><button class="btn pri" onclick="go(\'home\')">完成 · 回首頁</button></div>':''}
-  </div>`:(c.error?'':`<div class="callout info"><div class="t">⏳ 處理中</div>${escapeHTML(c.message||'正在準備交易,請稍候…')}</div>`)}`;
+  ${c.error?ipfsDiagnosticsHTML(c):''}
+  ${c.tx?`${vPassportBody(c)}
+    ${c.status==='confirmed'?'<div class="row" style="margin-top:14px"><span class="right"></span><button class="btn pri" onclick="go(\'home\')">完成 · 回首頁</button></div>':''}`
+    :(c.error?'':`<div class="callout info"><div class="t">⏳ 處理中</div>${escapeHTML(c.message||'正在準備交易,請稍候…')}</div>`)}`;
 }
 
 function vKeys(){
@@ -920,6 +1097,7 @@ async function doSign(){
     if(Number(network.chainId)!==SEPOLIA_CHAIN_ID) throw new Error('錢包目前不是 Sepolia,請切換後重試。');
     const signer=await provider.getSigner();
     const recipient=await signer.getAddress();
+    state.chain.issuer=recipient;
     const contract=new ethers.Contract(CONTRACT_ADDRESS,CONTRACT_ABI,signer);
 
     state.chain.step=3;
