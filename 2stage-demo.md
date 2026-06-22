@@ -6,7 +6,7 @@ This project will use a two-stage demo strategy.
 
 Stage 1 demonstrates the direct browser-wallet flow:
 
-`factory-endpoint.html` → browser wallet → Sepolia → `SimpleDPPNFT.mintDPP()`
+`factory-endpoint.html` → local Pinata upload proxy → browser wallet → Sepolia → `SimpleDPPNFT.mintDPP()`
 
 Stage 2 demonstrates the centralized platform auto-mint flow:
 
@@ -24,7 +24,8 @@ Flow:
 2. Public fields are included as plaintext.
 3. Private fields are represented as mock encrypted values for demo purposes.
 4. The frontend computes a stable metadata hash.
-5. IPFS upload is mocked.
+5. Metadata is uploaded to Pinata through a local backend proxy; explicit mock
+   mode remains available for offline demos.
 6. The frontend connects to an EVM browser wallet through `window.ethereum`.
 7. The wallet switches/checks Sepolia.
 8. The frontend calls `SimpleDPPNFT.mintDPP()`.
@@ -33,15 +34,31 @@ Flow:
 
 Stage 1 is useful because it proves the shortest end-to-end path:
 
-static HTML → wallet extension → Sepolia contract → NFT mint transaction
+static HTML → local IPFS proxy → wallet extension → Sepolia contract → NFT mint transaction
 
 Limitations:
 
 * It requires manual wallet confirmation.
 * It is not suitable for batch automation.
-* IPFS upload is still mocked.
+* Real IPFS upload requires the local proxy and a server-side Pinata JWT.
 * The current demo contract may allow unrestricted minting unless access control is added.
 * Private fields are not truly encrypted yet.
+
+## Intermediate step: local upload proxy
+
+The current real-IPFS integration sits between Stage 1 and Stage 2:
+
+```text
+factory-endpoint.html
+→ localhost:3001/upload-metadata
+→ Pinata pinJSONToIPFS
+→ ipfs://CID
+→ browser-wallet mint
+```
+
+This moves the Pinata credential out of the browser while preserving Stage 1's
+user-controlled wallet confirmation. Stage 2 will move the remaining signing
+and mint submission into the platform backend.
 
 # Second Stage: Platform-custodied auto-mint demo
 

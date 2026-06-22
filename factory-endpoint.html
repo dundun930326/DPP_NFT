@@ -154,6 +154,8 @@ const CONTRACT_ABI = [
 ];
 const SEPOLIA_CHAIN_ID = 11155111;
 const SEPOLIA_CHAIN_HEX = '0xaa36a7';
+const USE_MOCK_IPFS = false;
+const IPFS_UPLOAD_ENDPOINT = 'http://localhost:3001/upload-metadata';
 const DPP_SCHEMA = 'dpp-dye-fnsh-v1';
 const DPP_ORDER = '#A2207';
 const DPP_STAGE = 'dye-fnsh';
@@ -391,12 +393,45 @@ function computeDPPHashes(metadata){
   };
 }
 async function uploadMetadataToIPFS(metadata){
-  console.log('DPP metadata (mock IPFS upload):',metadata);
-  // TODO: send metadata to a local backend that owns Pinata/Arweave credentials.
-  // Never put an IPFS API key or secret in this frontend.
+  console.log('DPP metadata prepared for IPFS upload:',metadata);
+  // Pinata credentials belong only in the local backend .env file.
+  // Never put an IPFS API key, JWT, or secret in this frontend.
+  if(USE_MOCK_IPFS){
+    return {
+      cid:'bafy-demo-cid',
+      tokenURI:'ipfs://bafy-demo-cid/metadata.json',
+      gatewayURL:null
+    };
+  }
+
+  let response;
+  try{
+    response=await fetch(IPFS_UPLOAD_ENDPOINT,{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(metadata)
+    });
+  }catch(error){
+    console.error('IPFS upload backend connection failed:',error);
+    throw new Error(`無法連接本機 IPFS 上傳服務 (${IPFS_UPLOAD_ENDPOINT})。請先執行 npm start。`);
+  }
+
+  let result=null;
+  try{
+    result=await response.json();
+  }catch(error){
+    console.error('IPFS upload backend returned invalid JSON:',error);
+  }
+  if(!response.ok){
+    throw new Error(result?.error||`IPFS 上傳失敗 (HTTP ${response.status})。`);
+  }
+  if(!result?.cid || !result?.tokenURI){
+    throw new Error('IPFS 上傳服務未回傳有效的 CID / tokenURI。');
+  }
   return {
-    cid:'bafy-demo-cid',
-    tokenURI:'ipfs://bafy-demo-cid/metadata.json'
+    cid:result.cid,
+    tokenURI:result.tokenURI,
+    gatewayURL:result.gatewayURL||null
   };
 }
 function metadataCacheKey(tokenId){
@@ -436,8 +471,8 @@ function loadMintedMetadataCache(tokenId){
 TODO: Future "My DPP NFTs" metadata read priority:
 1. Read tokenURI and dppRecords from the chain.
 2. Fetch metadata from IPFS / Arweave when tokenURI is real and reachable.
-3. For the mocked tokenURI, try loadMintedMetadataCache(tokenId).
-4. Otherwise show: "Metadata JSON not available because IPFS upload is still mocked."
+3. If real fetch fails, or USE_MOCK_IPFS is enabled, try loadMintedMetadataCache(tokenId).
+4. Otherwise show that metadata JSON is unavailable from both IPFS and local cache.
 */
 
 /* ---------- Views ---------- */
@@ -590,7 +625,7 @@ function vChain(){
   <ul class="timeline">
     ${li(0,'連接錢包並確認 Sepolia')}
     ${li(1,'建立並雜湊 DPP metadata')}
-    ${li(2,'模擬上傳 IPFS')}
+    ${li(2,USE_MOCK_IPFS?'模擬上傳 IPFS':'上傳 metadata 至 IPFS')}
     ${li(3,'送出 mintDPP 交易')}
     ${li(4,'等待鏈上確認')}
   </ul>
@@ -600,6 +635,7 @@ function vChain(){
     <div class="kv">交易雜湊:<code>${escapeHTML(c.tx)}</code> &nbsp;<a class="pill" href="https://sepolia.etherscan.io/tx/${encodeURIComponent(c.tx)}" target="_blank" rel="noopener noreferrer">Sepolia Etherscan ↗</a></div>
     <div class="kv">時間戳:${escapeHTML(c.time||'等待確認')}</div>
     <div class="kv">Token URI:${escapeHTML(c.tokenURI||'')}</div>
+    ${c.gatewayURL&&/^https?:\/\//i.test(c.gatewayURL)?`<div class="kv"><a class="pill" href="${escapeHTML(c.gatewayURL)}" target="_blank" rel="noopener noreferrer">查看 IPFS Metadata JSON ↗</a></div>`:''}
     <div class="kv">Metadata 雜湊:${escapeHTML(c.metadataHash||'')}</div>
     <div class="kv">前一段參考:weave token #1041</div>
     <div class="kv" style="color:${c.status==='confirmed'?'var(--good)':'var(--accent)'}">狀態:${c.status==='confirmed'?'🟢 已確認 · 不可竄改':'⏳ 交易已送出,等待確認'}</div>
@@ -615,7 +651,10 @@ function vChain(){
       </details>`:''}
       <div class="callout info">
         <div class="t">🛈 Metadata 儲存位置</div>
-        目前 IPFS upload 仍為 mock，因此完整 JSON 會先保存在 localStorage demo cache。鏈上只保存 tokenURI、metadataHash 與 DPP record 欄位（schemaHash、orderHash、stage、previousTokenId、issuer、createdAt）；未來接上真實 IPFS / Arweave 後，前端應從 tokenURI 抓回 metadata JSON。
+        ${USE_MOCK_IPFS
+          ?'目前 IPFS upload 為明確啟用的 mock 模式，因此完整 JSON 會先保存在 localStorage demo cache。'
+          :'IPFS tokenURI 與 metadataHash 是 metadata 的 source of truth；localStorage 只是一份方便本機檢視的 cache。'}
+        鏈上只保存 tokenURI、metadataHash 與 DPP record 欄位（schemaHash、orderHash、stage、previousTokenId、issuer、createdAt），不保存完整 JSON。
         <div class="kv">Cache note:<code>LOCAL_DEMO_CACHE_ONLY_NOT_ON_CHAIN</code></div>
         <div class="kv">Cache key:${escapeHTML(c.metadataCacheKey||'等待 tokenId 後建立 / localStorage 無法使用')}</div>
       </div>
@@ -733,7 +772,7 @@ function askSign(){
 async function doSign(){
   state.chain={
     step:0,status:'preparing',message:'正在連接錢包並確認 Sepolia…',
-    tx:null,tokenId:null,time:null,metadataHash:null,tokenURI:null,error:null,
+    tx:null,tokenId:null,time:null,metadataHash:null,tokenURI:null,gatewayURL:null,error:null,
     metadata:null,canonicalJson:null,metadataCacheKey:null
   };
   go('chain');
@@ -758,10 +797,11 @@ async function doSign(){
     state.chain.metadataHash=hashes.metadataHash;
 
     state.chain.step=2;
-    state.chain.message='正在執行 demo-only IPFS 上傳…';
+    state.chain.message=USE_MOCK_IPFS?'正在執行 demo-only IPFS 上傳…':'正在透過本機 backend 上傳 metadata 至 Pinata / IPFS…';
     render();
     const upload=await uploadMetadataToIPFS(metadata);
     state.chain.tokenURI=upload.tokenURI;
+    state.chain.gatewayURL=upload.gatewayURL||null;
 
     if(!ethers.isAddress(CONTRACT_ADDRESS) || CONTRACT_ADDRESS===ethers.ZeroAddress){
       throw new Error('NFT 合約位址尚未設定。請先用 Remix 部署 SimpleDPPNFT.sol,再填入 CONTRACT_ADDRESS。');

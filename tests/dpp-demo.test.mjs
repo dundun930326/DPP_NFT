@@ -28,11 +28,21 @@ function metadataHelpersSource() {
   return html.slice(start + startMarker.length, end);
 }
 
-function loadMetadataHelpers(fields) {
+function loadMetadataHelpers(
+  fields,
+  {
+    useMockIpfs = false,
+    fetchImpl = async () => {
+      throw new Error("Backend unavailable");
+    },
+  } = {},
+) {
   const localStorageEntries = new Map();
   const context = vm.createContext({
     FIELDS: structuredClone(fields),
     CONTRACT_ADDRESS: DEPLOYED_SEPOLIA_ADDRESS,
+    USE_MOCK_IPFS: useMockIpfs,
+    IPFS_UPLOAD_ENDPOINT: "http://localhost:3001/upload-metadata",
     DPP_SCHEMA: "dpp-dye-fnsh-v1",
     DPP_ORDER: "#A2207",
     DPP_STAGE: "dye-fnsh",
@@ -50,6 +60,7 @@ function loadMetadataHelpers(fields) {
         localStorageEntries.delete(key);
       },
     },
+    fetch: fetchImpl,
     console: { log() {}, warn() {} },
     ethers: {
       toUtf8Bytes(value) {
@@ -178,6 +189,14 @@ test("HTML exposes the ethers v6 Sepolia wallet and contract configuration", () 
   assert.match(html, /chainChanged/);
 });
 
+test("frontend defaults to the local real-IPFS upload backend", () => {
+  assert.match(html, /const\s+USE_MOCK_IPFS\s*=\s*false/);
+  assert.match(
+    html,
+    /const\s+IPFS_UPLOAD_ENDPOINT\s*=\s*['"]http:\/\/localhost:3001\/upload-metadata['"]/,
+  );
+});
+
 test("frontend targets the deployed SimpleDPPNFT contract on Sepolia", () => {
   assert.match(
     html,
@@ -254,14 +273,66 @@ test("buildMetadataJson partitions live FIELDS state without publicizing private
   );
 });
 
-test("mock IPFS upload returns the documented deterministic URI", async () => {
-  const helpers = loadMetadataHelpers([]);
+test("real IPFS mode posts metadata to the local backend", async () => {
+  let request = null;
+  const helpers = loadMetadataHelpers([], {
+    useMockIpfs: false,
+    fetchImpl: async (url, options) => {
+      request = { url, options };
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            cid: "bafy-real-cid",
+            tokenURI: "ipfs://bafy-real-cid",
+            gatewayURL: "https://gateway.example/ipfs/bafy-real-cid",
+          };
+        },
+      };
+    },
+  });
+  const metadata = { name: "Real DPP" };
+  const result = await helpers.uploadMetadataToIPFS(metadata);
+
+  assert.equal(request.url, "http://localhost:3001/upload-metadata");
+  assert.equal(request.options.method, "POST");
+  assert.equal(request.options.headers["Content-Type"], "application/json");
+  assert.deepEqual(JSON.parse(request.options.body), metadata);
+  assert.deepEqual(structuredClone(result), {
+    cid: "bafy-real-cid",
+    tokenURI: "ipfs://bafy-real-cid",
+    gatewayURL: "https://gateway.example/ipfs/bafy-real-cid",
+  });
+});
+
+test("explicit mock IPFS mode returns the deterministic demo URI", async () => {
+  const helpers = loadMetadataHelpers([], { useMockIpfs: true });
   const result = await helpers.uploadMetadataToIPFS({ name: "test" });
 
   assert.deepEqual(structuredClone(result), {
     cid: "bafy-demo-cid",
     tokenURI: "ipfs://bafy-demo-cid/metadata.json",
+    gatewayURL: null,
   });
+});
+
+test("real IPFS mode rejects backend errors without a fake URI fallback", async () => {
+  const helpers = loadMetadataHelpers([], {
+    useMockIpfs: false,
+    fetchImpl: async () => ({
+      ok: false,
+      status: 503,
+      async json() {
+        return { error: "PINATA_JWT is not configured on the server." };
+      },
+    }),
+  });
+
+  await assert.rejects(
+    helpers.uploadMetadataToIPFS({ name: "test" }),
+    /PINATA_JWT is not configured/,
+  );
 });
 
 test("computeDPPHashes hashes canonical metadata and the fixed DPP identifiers", () => {
@@ -328,6 +399,7 @@ test("chain status UI distinguishes submitted metadata from canonical hash input
   assert.match(html, /LOCAL_DEMO_CACHE_ONLY_NOT_ON_CHAIN/);
   assert.match(html, /鏈上只保存 tokenURI、metadataHash 與 DPP record 欄位/);
   assert.doesNotMatch(html, /鏈上保存完整(?:的)? Metadata JSON/);
+  assert.match(html, /IPFS tokenURI.*metadataHash.*source of truth/);
 });
 
 test("doSign sends mintDPP through an ethers BrowserProvider and parses the event", () => {
@@ -383,6 +455,22 @@ test("doSign preserves submitted metadata, caches it, and renders the confirmed 
   const { context, elements, localStorageEntries } = createApplicationContext();
   const account = "0x1234567890123456789012345678901234567890";
   let constructedContractAddress = null;
+  let mintArguments = null;
+  context.fetch = async (url, options) => {
+    assert.equal(url, "http://localhost:3001/upload-metadata");
+    assert.equal(options.method, "POST");
+    return {
+      ok: true,
+      status: 200,
+      async json() {
+        return {
+          cid: "bafy-real-cid",
+          tokenURI: "ipfs://bafy-real-cid",
+          gatewayURL: "https://gateway.example/ipfs/bafy-real-cid",
+        };
+      },
+    };
+  };
   context.ethereum = {
     on() {},
     async request({ method }) {
@@ -426,7 +514,8 @@ test("doSign preserves submitted metadata, caches it, and renders the confirmed 
           return { name: "DPPMinted", args: { tokenId: 77n } };
         },
       };
-      async mintDPP() {
+      async mintDPP(...args) {
+        mintArguments = args;
         return {
           hash: "0xfeed1234",
           async wait() {
@@ -446,6 +535,8 @@ test("doSign preserves submitted metadata, caches it, and renders the confirmed 
     context,
   );
   assert.equal(constructedContractAddress, DEPLOYED_SEPOLIA_ADDRESS);
+  assert.equal(mintArguments[1], "ipfs://bafy-real-cid");
+  assert.equal(chainState.gatewayURL, "https://gateway.example/ipfs/bafy-real-cid");
   assert.equal(chainState.metadata.name, "Evergreen DPP #A2207 · dye-fnsh");
   assert.equal(
     chainState.canonicalJson,

@@ -1,14 +1,14 @@
 # DPP EVM Demo Progress Log
 
-Last updated: 2026-06-18
+Last updated: 2026-06-21
 
 ## Current Status
 
 The original static factory endpoint prototype now contains a minimal EVM demo
 path:
 
-`factory-endpoint.html` → injected browser wallet → Sepolia check/switch →
-canonical DPP metadata → mock IPFS URI → `SimpleDPPNFT.mintDPP()` → confirmed
+`factory-endpoint.html` → local Pinata upload proxy → real IPFS URI → injected
+browser wallet → Sepolia check/switch → `SimpleDPPNFT.mintDPP()` → confirmed
 transaction hash and parsed token ID in the existing chain-status UI.
 
 The Sepolia deployment is now wired into the frontend:
@@ -48,7 +48,34 @@ LOCAL_DEMO_CACHE_ONLY_NOT_ON_CHAIN
 ```
 
 This is only a local demo fallback while `uploadMetadataToIPFS()` returns a
-mocked URI. The full metadata JSON is not claimed to be stored on-chain.
+mocked URI. This historical Stage 1 limitation is superseded by the real Pinata
+proxy below; the full metadata JSON is still not claimed to be stored on-chain.
+
+## Progress Entry: Real Pinata Upload Proxy
+
+On 2026-06-21, the frontend was switched to real metadata upload by default:
+
+```text
+factory-endpoint.html
+→ http://localhost:3001/upload-metadata
+→ Pinata pinJSONToIPFS
+→ real ipfs://CID
+→ Sepolia mintDPP
+```
+
+`server.js` reads `PINATA_JWT` from a local `.env` and returns only the CID,
+token URI, and gateway URL. The frontend contains no Pinata credential. Explicit
+mock mode remains available through `USE_MOCK_IPFS = true`, but real mode does
+not mint with a fake URI when upload fails.
+
+A real Pinata validation upload completed successfully with:
+
+```text
+CID: bafkreieicej26ntgzs3lzcggfsp6gzlhzvqwtebjxkj2rlnx5pcnxntuoy
+tokenURI: ipfs://bafkreieicej26ntgzs3lzcggfsp6gzlhzvqwtebjxkj2rlnx5pcnxntuoy
+```
+
+The configured Pinata gateway returned HTTP `200` for that CID.
 
 ## Files Changed
 
@@ -58,7 +85,7 @@ mocked URI. The full metadata JSON is not claimed to be stored on-chain.
   - Added wallet connection, account display, account-change handling,
     chain-change handling, Sepolia detection, and Sepolia switching.
   - Added canonical metadata generation and hashing.
-  - Added the mock IPFS upload boundary.
+  - Added real backend IPFS upload with an explicit mock-mode fallback.
   - Replaced the random/mock `doSign()` sequence with a real
     `ethers.Contract.mintDPP()` transaction flow.
   - Added real pending/confirmed/error states, Sepolia Etherscan links, and
@@ -67,10 +94,15 @@ mocked URI. The full metadata JSON is not claimed to be stored on-chain.
   - Added a minimal OpenZeppelin `ERC721URIStorage` contract.
   - Added `DPPRecord`, `mintDPP`, record storage, and `DPPMinted`.
 - `tests/dpp-demo.test.mjs`
-  - Added dependency-free Node tests for the Solidity/frontend surface.
-  - Added executable canonical JSON, metadata partition, hashing, mock IPFS,
-    wallet switching, application boot, transaction confirmation, and event
-    parsing tests.
+  - Tests the Solidity/frontend surface, canonical JSON, both IPFS modes,
+    wallet switching, mint confirmation, caching, and event parsing.
+- `server.js`
+  - Added the local Express proxy for Pinata `pinJSONToIPFS`.
+- `tests/ipfs-server.test.mjs`
+  - Tests missing-JWT rejection and mocked Pinata success without external
+    requests.
+- `package.json`, `package-lock.json`, `.env.example`
+  - Added the minimal backend runtime and configuration template.
 - `docs/superpowers/specs/2026-06-18-static-evm-dpp-demo-design.md`
   - Records the approved design.
 - `docs/superpowers/plans/2026-06-18-static-evm-dpp-demo.md`
@@ -128,7 +160,7 @@ The frontend uses ethers.js to compute:
 2. Connects when needed.
 3. Checks or switches to Sepolia.
 4. Builds and hashes DPP metadata.
-5. Calls the mock IPFS upload function.
+5. Uploads metadata through the local Pinata proxy (or explicit mock mode).
 6. Validates `CONTRACT_ADDRESS`.
 7. Creates a `BrowserProvider`, signer, and contract instance.
 8. Calls `mintDPP(...)`.
@@ -162,15 +194,31 @@ Future “My DPP NFTs” metadata reading should use this priority:
 
 1. Read `tokenURI` and `dppRecords` from the chain.
 2. Fetch metadata through a real IPFS/Arweave token URI.
-3. If the URI is still mocked, try the token-scoped localStorage cache.
-4. If neither source is available, show:
-   `Metadata JSON not available because IPFS upload is still mocked.`
+3. If the IPFS fetch fails or the URI is mocked, try the token-scoped
+   localStorage cache.
+4. If neither source is available, show a metadata-unavailable message.
+
+### Local Pinata Upload Backend
+
+`server.js` provides `GET /health` and `POST /upload-metadata`. The upload
+endpoint sends metadata to Pinata with CID version 1 and returns:
+
+```json
+{
+  "cid": "bafy...",
+  "tokenURI": "ipfs://bafy...",
+  "gatewayURL": "https://..."
+}
+```
+
+The backend rejects uploads when `PINATA_JWT` is missing. Detailed errors stay
+in the server console; frontend responses do not expose the JWT or authorization
+header.
 
 ## Still Mocked
 
-- `uploadMetadataToIPFS()` only logs metadata and returns:
-  - CID: `bafy-demo-cid`
-  - URI: `ipfs://bafy-demo-cid/metadata.json`
+- A deterministic fake CID remains available only when `USE_MOCK_IPFS` is
+  explicitly set to `true`.
 - `ENC(DEMO_ONLY:...)` strings are labels, not encryption.
 - TEE, CP-ABE, proxy re-encryption, VC, SD-JWT, cloud verification, and key
   release behavior remain prototype UI behavior.
@@ -179,31 +227,52 @@ Future “My DPP NFTs” metadata reading should use this priority:
   shared across devices or browsers.
 
 Do not place Pinata, Arweave, or other service credentials in
-`factory-endpoint.html`. A later upload implementation should send metadata to a
-local/backend service that owns those credentials.
+`factory-endpoint.html`. `.env` is ignored and must remain local. Production
+deployments should use protected server-side secret management.
 
 ## Run Locally
 
-From the project root:
+### Run the IPFS backend
 
 ```bash
 cd /Users/dunnnnn/Homework/DPP
+cp .env.example .env
+```
+
+Fill the local file:
+
+```env
+PINATA_JWT=your_pinata_jwt
+PINATA_GATEWAY=
+PORT=3001
+```
+
+Then run:
+
+```bash
+npm install
+npm start
+```
+
+### Run the static frontend
+
+In a second terminal:
+
+```bash
 python3 -m http.server 3000
 ```
 
-Then open:
+Open:
 
 ```text
 http://localhost:3000/factory-endpoint.html
 ```
 
-For local Codex validation under this project's conda policy, use:
+For Codex-local validation under this project's conda policy:
 
 ```bash
 conda run -n codex python -m http.server 3000
 ```
-
-This project has no install or build step.
 
 ## Deploy Through Remix
 
@@ -243,14 +312,14 @@ array.
 Automated command:
 
 ```bash
-node --test tests/dpp-demo.test.mjs
+npm test
 ```
 
-Result on 2026-06-18:
+Result on 2026-06-21:
 
 ```text
-tests 13
-pass 13
+tests 18
+pass 18
 fail 0
 ```
 
@@ -272,6 +341,14 @@ Additional evidence:
   canonical JSON in `state.chain`.
 - The cache helper round-tripped the complete required local-only cache record.
 - The chain-status UI rendered both pretty metadata JSON and canonical JSON.
+- Frontend real mode posted metadata to `/upload-metadata` and passed the
+  returned IPFS URI into `mintDPP`.
+- Explicit mock mode retained the deterministic offline result.
+- Backend tests verified missing-JWT rejection and a successful mocked Pinata
+  response without contacting Pinata.
+- A real local-backend-to-Pinata upload returned CID
+  `bafkreieicej26ntgzs3lzcggfsp6gzlhzvqwtebjxkj2rlnx5pcnxntuoy`.
+- The configured gateway returned HTTP `200` for the uploaded metadata.
 - Secret scan matches were documentation, prohibitions, or test fixture text;
   no credential was found.
 
@@ -291,6 +368,10 @@ this session did not independently submit a deployment or mint transaction.
 - [x] Metadata JSON is generated from `FIELDS`.
 - [x] Canonical metadata hashing calls are verified.
 - [x] Mock token URI is generated.
+- [x] Real mode calls the local metadata upload endpoint.
+- [x] Real upload failures stop before fake-URI minting.
+- [x] Backend rejects upload when `PINATA_JWT` is missing.
+- [x] Backend maps a mocked Pinata CID to `ipfs://CID`.
 - [x] Frontend targets deployed contract
       `0x24aeeb254a48820b5b0bdcbdce980a725535718f`.
 - [x] `mintDPP` is called on the configured deployed address in the controlled
@@ -300,8 +381,8 @@ this session did not independently submit a deployment or mint transaction.
 - [x] `state.chain` retains submitted metadata and canonical JSON.
 - [x] Confirmed mints with a parsed token ID save the localStorage demo cache.
 - [x] UI displays submitted pretty JSON and canonical hash input separately.
-- [x] UI explains that full metadata is local/mock-IPFS data, not full on-chain
-      JSON.
+- [x] UI explains that IPFS plus metadataHash is the source of truth,
+      localStorage is a convenience cache, and full JSON is not on-chain.
 - [x] No private key, mnemonic, API key, or service secret is present.
 - [ ] Real browser extension approval has been tested manually.
 - [x] Sepolia contract deployment was completed and supplied by the project
@@ -309,12 +390,15 @@ this session did not independently submit a deployment or mint transaction.
 - [ ] A real Sepolia mint transaction has been completed from this frontend.
 - [ ] MetaMask or OKX Wallet transaction confirmation has been observed in this
       session.
+- [x] A real Pinata upload was performed through the local backend with the
+      user-provided JWT.
 
 ## Known Issues
 
 - Real minting requires an injected EVM wallet and Sepolia test ETH.
 - ethers.js is loaded from a CDN, so first load requires internet access.
-- The mock IPFS URI does not resolve to persistent metadata.
+- Real upload requires the local backend and a valid Pinata JWT.
+- The explicit mock URI does not resolve to persistent metadata.
 - The localStorage metadata cache disappears if site data is cleared and cannot
   recover metadata on another browser/device.
 - The mock encryption does not provide confidentiality.
@@ -325,10 +409,9 @@ this session did not independently submit a deployment or mint transaction.
 
 ## Recommended Next Steps
 
-1. Manually run one mint using a funded test wallet and verify the Etherscan
-   transaction and token URI.
-2. Replace the mock upload with real IPFS/Arweave storage and fetch metadata
-   through `tokenURI`.
-3. Add the future “My DPP NFTs” chain/event read flow with local-cache fallback.
+1. Configure a local Pinata JWT and perform one real metadata upload.
+2. Run one funded-wallet mint and verify the gateway metadata against
+   `metadataHash` and the Etherscan transaction.
+3. Add the future “My DPP NFTs” read flow with IPFS and local-cache fallback.
 4. Replace demo encryption with an explicit cryptographic design.
 5. Add issuer access control and contract tests before production use.
