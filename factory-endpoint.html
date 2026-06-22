@@ -1,0 +1,865 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>工廠端 Endpoint · 互動原型</title>
+<style>
+  :root{
+    --paper:#f6f3ec; --surface:#fff; --surface2:#fbfaf6; --ink:#20211c; --soft:#44463e;
+    --muted:#76776d; --line:#e4dfd2; --lineSoft:#efeadd;
+    --accent:#4338ca; --accentD:#3730a3; --teal:#0d9488;
+    --good:#15803d; --goodBg:#eaf5ec; --warn:#b45309; --warnBg:#fbf1e3;
+    --jewel:#9333ea; --jewelBg:#f4ecfb; --info:#eef0fb;
+    --radius:13px; --shadow:0 1px 2px rgba(0,0,0,.04),0 8px 24px rgba(40,38,30,.06);
+    --font:-apple-system,"PingFang TC","Noto Sans TC","Microsoft JhengHei","Segoe UI",Roboto,sans-serif;
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:var(--font);background:var(--paper);color:var(--ink);line-height:1.6;font-size:15px;-webkit-font-smoothing:antialiased}
+  /* top bar */
+  .topbar{position:sticky;top:0;z-index:30;background:var(--surface);border-bottom:1px solid var(--line);
+    display:flex;align-items:center;gap:12px;padding:10px 18px}
+  .topbar .brand{font-weight:800;font-size:15px}
+  .topbar .role{font-size:13px;color:var(--muted)}
+  .topbar .spacer{flex:1}
+  .chip{display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:600;border-radius:999px;
+    padding:3px 10px;background:var(--goodBg);color:var(--good);border:1px solid #cfe6d4}
+  .chip.demo{background:var(--info);color:var(--accent);border-color:#d9ddf6}
+  button.chip{font-family:var(--font);cursor:pointer}
+  .chip.off{background:var(--lineSoft);color:var(--muted);border-color:var(--line)}
+  .chip.bad{background:var(--warnBg);color:var(--warn);border-color:#f0dcc0}
+  .wallet-chip{max-width:190px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  /* layout */
+  .layout{display:flex;align-items:flex-start}
+  .side{width:228px;flex:none;border-right:1px solid var(--line);background:var(--surface2);
+    min-height:calc(100vh - 53px);position:sticky;top:53px;padding:12px 10px}
+  .nav a{display:flex;align-items:center;gap:9px;padding:8px 12px;border-radius:10px;text-decoration:none;
+    color:var(--soft);font-size:14px;cursor:pointer;margin:2px 0}
+  .nav a:hover{background:var(--lineSoft);color:var(--ink)}
+  .nav a.on{background:var(--accent);color:#fff}
+  .nav a .b{margin-left:auto;font-size:11px;font-weight:700;background:#dc2626;color:#fff;border-radius:999px;padding:1px 7px}
+  .nav a.on .b{background:rgba(255,255,255,.3)}
+  .nav .grp{font-size:11px;letter-spacing:.08em;color:var(--muted);text-transform:uppercase;margin:12px 12px 4px}
+  main{flex:1;min-width:0;padding:24px 30px 80px;max-width:1000px}
+  h1{font-size:24px;margin:4px 0 4px}
+  h2{font-size:18px;margin:26px 0 8px}
+  h3{font-size:15.5px;margin:18px 0 6px}
+  p{color:var(--soft);margin:8px 0}
+  .eyebrow{font-size:12px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--accent)}
+  code{font-family:var(--mono);font-size:.86em;background:var(--lineSoft);padding:1px 6px;border-radius:5px;color:#5b4636}
+  /* cards & callouts */
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:16px 18px;box-shadow:var(--shadow);margin:12px 0}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media(max-width:760px){.grid2{grid-template-columns:1fr}}
+  .callout{border-radius:11px;padding:12px 15px;margin:12px 0;font-size:13.5px;border:1px solid var(--line);background:var(--surface2)}
+  .callout .t{font-weight:700;font-size:12.5px;margin-bottom:3px;display:flex;gap:6px;align-items:center}
+  .callout.key{background:var(--goodBg);border-color:#cfe6d4}.callout.key .t{color:var(--good)}
+  .callout.warn{background:var(--warnBg);border-color:#f0dcc0}.callout.warn .t{color:var(--warn)}
+  .callout.info{background:var(--info);border-color:#d9ddf6}.callout.info .t{color:var(--accent)}
+  .callout.jewel{background:var(--jewelBg);border-color:#e6d3f6}.callout.jewel .t{color:var(--jewel)}
+  .pill{display:inline-block;font-size:11.5px;padding:2px 9px;border-radius:999px;background:var(--lineSoft);color:var(--soft);font-weight:600}
+  .btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:var(--surface);color:var(--ink);
+    border-radius:10px;padding:9px 16px;font-size:14px;font-weight:700;cursor:pointer;font-family:var(--font)}
+  .btn:hover{border-color:#cfc8b6}
+  .btn.pri{background:var(--accent);color:#fff;border-color:var(--accent)}.btn.pri:hover{background:var(--accentD)}
+  .btn.ghost{background:transparent}
+  .btn.warn{color:var(--warn);border-color:#f0dcc0;background:#fff}
+  .btn:disabled{opacity:.5;cursor:not-allowed}
+  .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  .right{margin-left:auto}
+  /* stepper */
+  .steps{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:6px 0 18px;font-size:12.5px}
+  .steps .s{padding:5px 11px;border-radius:999px;background:var(--surface);border:1px solid var(--line);color:var(--muted)}
+  .steps .s.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+  .steps .s.done{background:var(--goodBg);color:var(--good);border-color:#cfe6d4}
+  .steps .ar{color:var(--muted)}
+  /* disclosure table */
+  .ftable{width:100%;border-collapse:collapse;background:var(--surface);border-radius:12px;overflow:hidden;box-shadow:var(--shadow);margin-top:8px}
+  .ftable th{font-size:12px;text-align:left;color:var(--muted);background:var(--surface2);padding:9px 12px;font-weight:700}
+  .ftable td{padding:10px 12px;border-top:1px solid var(--lineSoft);vertical-align:middle;font-size:14px}
+  .grphead td{background:var(--surface2);font-weight:700;font-size:12.5px;color:var(--soft);padding:7px 12px}
+  .fval{font-family:var(--mono);font-size:12.5px;color:var(--soft)}
+  .seg{display:inline-flex;border:1px solid var(--line);border-radius:999px;overflow:hidden;background:var(--surface)}
+  .seg button{border:0;background:transparent;padding:5px 12px;font-size:12.5px;font-weight:700;cursor:pointer;color:var(--muted);font-family:var(--font)}
+  .seg button.pub.on{background:var(--goodBg);color:var(--good)}
+  .seg button.pri.on{background:var(--jewelBg);color:var(--jewel)}
+  .vis{font-size:11px;color:var(--muted)}
+  .vis .who{display:inline-block;background:var(--lineSoft);border-radius:6px;padding:1px 6px;margin:1px 2px}
+  .jewelmark{color:var(--jewel);font-weight:700;font-size:11px}
+  .summary{display:flex;gap:14px;align-items:center;flex-wrap:wrap;background:var(--surface2);border:1px solid var(--line);
+    border-radius:12px;padding:12px 16px;margin:10px 0}
+  .summary .big{font-size:20px;font-weight:800}
+  .bdcol{border-radius:12px;padding:14px 16px;margin:10px 0;border:1px solid var(--line)}
+  .bdcol.pub{background:var(--goodBg);border-color:#cfe6d4}
+  .bdcol.pri{background:var(--jewelBg);border-color:#e6d3f6}
+  .bdcol.att{background:var(--surface2)}
+  .bdcol h4{margin:0 0 8px;font-size:14.5px}
+  .kv{font-family:var(--mono);font-size:12.5px;color:var(--soft);margin:3px 0}
+  /* progress */
+  .bar{height:9px;background:var(--lineSoft);border-radius:999px;overflow:hidden;margin:8px 0}
+  .bar>i{display:block;height:100%;width:0;background:var(--teal);transition:width .25s}
+  pre.code{background:#1f1d29;color:#e7e3f5;border-radius:10px;padding:14px 16px;overflow:auto;font-family:var(--mono);font-size:12px;line-height:1.5}
+  .timeline{list-style:none;padding:0;margin:8px 0}
+  .timeline li{display:flex;gap:10px;align-items:center;padding:7px 0;font-size:14px}
+  .timeline .dot{width:22px;height:22px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;font-size:12px;background:var(--lineSoft);color:var(--muted)}
+  .timeline li.done .dot{background:var(--goodBg);color:var(--good)}
+  .timeline li.cur .dot{background:var(--accent);color:#fff}
+  .scbar{display:flex;gap:4px;align-items:center;flex-wrap:wrap;font-size:13px;margin:8px 0}
+  .scbar .st{padding:4px 9px;border-radius:8px;background:var(--surface);border:1px solid var(--line);color:var(--muted)}
+  .scbar .st.done{background:var(--goodBg);color:var(--good);border-color:#cfe6d4}
+  .scbar .st.cur{background:var(--info);color:var(--accent);border-color:#d9ddf6;font-weight:700}
+  /* modal */
+  .mask{position:fixed;inset:0;background:rgba(30,28,22,.45);display:flex;align-items:center;justify-content:center;z-index:60;padding:20px}
+  .modal{background:var(--surface);border-radius:16px;max-width:440px;width:100%;padding:22px 24px;box-shadow:0 20px 60px rgba(0,0,0,.3)}
+  .modal h3{margin:0 0 8px}
+  .hidden{display:none}
+  select{font-family:var(--font);font-size:13.5px;padding:6px 10px;border-radius:9px;border:1px solid var(--line);background:var(--surface)}
+  @media(max-width:720px){
+    .layout{flex-direction:column}
+    .side{width:100%;min-height:0;position:static;border-right:0;border-bottom:1px solid var(--line);display:flex;overflow:auto}
+    .nav{display:flex;gap:4px}.nav .grp{display:none}.nav a{white-space:nowrap;margin:0}
+    main{padding:18px}
+  }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <span class="brand">🏭 Evergreen 染整廠</span>
+  <span class="role">· 角色:染整 <code>dye-fnsh</code> · 訂單 #A2207</span>
+  <span class="spacer"></span>
+  <span class="chip">🟢 上線</span>
+  <span class="chip">🔐 TEE 已連</span>
+  <button id="networkStatus" class="chip off" onclick="switchToSepolia()">網路:未偵測</button>
+  <button id="walletButton" class="chip off wallet-chip" onclick="connectWallet()">👛 尚未連線</button>
+  <span class="chip demo">原型 Demo</span>
+</div>
+
+<div class="layout">
+  <aside class="side"><nav class="nav" id="nav"></nav></aside>
+  <main id="main"></main>
+</div>
+
+<div id="modal" class="mask hidden"><div class="modal" id="modalBody"></div></div>
+
+<script src="https://cdn.jsdelivr.net/npm/ethers@6.17.0/dist/ethers.umd.min.js"></script>
+<script>
+/* ---------- EVM demo config ---------- */
+// SimpleDPPNFT deployed on Sepolia.
+const CONTRACT_ADDRESS = '0x24aeeb254a48820b5b0bdcbdce980a725535718f';
+const CONTRACT_ABI = [
+  'function mintDPP(address to,string tokenURI_,bytes32 metadataHash,bytes32 schemaHash,bytes32 orderHash,bytes32 stage,uint256 previousTokenId) external returns (uint256 tokenId)',
+  'event DPPMinted(uint256 indexed tokenId,address indexed recipient,string tokenURI,bytes32 metadataHash,bytes32 schemaHash,bytes32 orderHash,bytes32 stage,uint256 previousTokenId)'
+];
+const SEPOLIA_CHAIN_ID = 11155111;
+const SEPOLIA_CHAIN_HEX = '0xaa36a7';
+const DPP_SCHEMA = 'dpp-dye-fnsh-v1';
+const DPP_ORDER = '#A2207';
+const DPP_STAGE = 'dye-fnsh';
+const DPP_PREVIOUS_TOKEN_ID = 1041;
+const FACTORY_DID = 'did:web:evergreen-dye.example';
+
+/* ---------- 資料(範例) ---------- */
+const FIELDS = [
+  {id:'machine', key:'machineId', grp:'機台 / 製程', label:'染色機 ID', val:'DYE-07', kind:'data', sensitive:false, rec:'private'},
+  {id:'stenter', key:'stenterParam', grp:'機台 / 製程', label:'定型溫度 / 車速', val:'195°C / 22 m·min', kind:'data', sensitive:true, rec:'private'},
+  {id:'batch',   key:'batch', grp:'批次 / 料號', label:'染色批號 batch', val:'B-2207-13', kind:'data', sensitive:false, rec:'public'},
+  {id:'recipe',  key:'recipe', grp:'批次 / 料號', label:'染料配方 recipe', val:'CI Acid Blue 25 · 2.1%owf …', kind:'data', sensitive:true, rec:'private'},
+  {id:'deltaE',  key:'deltaE', grp:'測試 / 品質', label:'色差 ΔE', val:'0.82', kind:'data', sensitive:false, rec:'public'},
+  {id:'fast',    key:'fastness', grp:'測試 / 品質', label:'堅牢度 fastness (ISO 105)', val:'摩擦 4-5 級', kind:'data', sensitive:false, rec:'public'},
+  {id:'cod',     key:'cod', grp:'測試 / 品質', label:'廢水 COD', val:'180 mg/L', kind:'data', sensitive:false, rec:'public'},
+  {id:'report',  key:'testReport', grp:'文件', label:'測試報告.pdf', val:'hash 3af9… (只存雜湊)', kind:'doc', sensitive:false, rec:'public'},
+  {id:'grs',     key:'grsCert', grp:'文件', label:'GRS 交易證明.pdf', val:'hash b1c7… (只存雜湊)', kind:'doc', sensitive:true, rec:'private'},
+];
+FIELDS.forEach(f=>f.disclosure=f.rec);
+
+const state={
+  view:'home', signed:false, preprocessed:false,
+  chain:null,
+  requests:[{id:'r1', who:'歐盟主管機關', field:'廢水 COD 原始值 + 報告.pdf', reason:'抽查合規', vc:'gov-eu VC ✓ 已驗', scope:'一次性 · 90 天', status:'pending'}],
+  keys:[
+    {id:'A2207', label:'#A2207 染整', enc:4, epoch:'e3', status:'有效'},
+    {id:'A2206', label:'#A2206 織布', enc:2, epoch:'e2', status:'有效'},
+  ],
+  grants:[{id:'g1', who:'歐盟主管機關', scope:'限「廢水 COD」· 至 2026-12'}],
+};
+const walletState={account:null, chainId:null};
+
+/* ---------- 導覽 ---------- */
+const NAV=[
+  ['_c1','收集流程'],
+  ['home','▣ 首頁'],
+  ['inbox','📥 政策收件匣','inbox'],
+  ['disclose','🎛 揭露決策'],
+  ['preprocess','⚙ 預處理'],
+  ['boundary','🔏 加密與送出'],
+  ['chain','⛓ 上鏈狀態'],
+  ['_c2','管理'],
+  ['keys','🗝 金鑰管理'],
+  ['vc','🎫 憑證夾'],
+  ['verify','🔎 驗證請求','verify'],
+  ['events','🔔 事件通知'],
+  ['settings','⚙ 設定'],
+];
+function renderNav(){
+  let h='';
+  for(const it of NAV){
+    if(it[0].startsWith('_c')){h+=`<div class="grp">${it[1]}</div>`;continue;}
+    const [v,label,badgeKind]=it;
+    let badge='';
+    if(badgeKind==='inbox') badge='<span class="b">1</span>';
+    if(badgeKind==='verify'){const n=state.requests.filter(r=>r.status==='pending').length; if(n)badge=`<span class="b">${n}</span>`;}
+    h+=`<a class="${state.view===v?'on':''}" onclick="go('${v}')">${label}${badge}</a>`;
+  }
+  document.getElementById('nav').innerHTML=h;
+}
+function go(v){state.view=v;render();window.scrollTo(0,0);}
+
+/* ---------- helpers ---------- */
+const pubCount=()=>FIELDS.filter(f=>f.disclosure==='public').length;
+const priCount=()=>FIELDS.filter(f=>f.disclosure==='private').length;
+function stepper(cur){
+  const steps=[['inbox','收件匣'],['disclose','揭露決策'],['preprocess','預處理'],['boundary','加密送出'],['chain','上鏈']];
+  const idx=steps.findIndex(s=>s[0]===cur);
+  return `<div class="steps">`+steps.map((s,i)=>{
+    const cls=i<idx?'done':(i===idx?'on':'');
+    return `<span class="s ${cls}" onclick="go('${s[0]}')" style="cursor:pointer">${i<idx?'✓ ':''}${s[1]}</span>`+(i<steps.length-1?'<span class="ar">→</span>':'');
+  }).join('')+`</div>`;
+}
+
+/* ---------- EVM wallet helpers ---------- */
+function shortAddress(address){
+  return address?`${address.slice(0,6)}…${address.slice(-4)}`:'尚未連線';
+}
+function escapeHTML(value){
+  return String(value??'').replace(/[&<>"']/g,char=>({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+  })[char]);
+}
+function parseChainId(chainId){
+  return typeof chainId==='string'?Number.parseInt(chainId,16):Number(chainId);
+}
+function isSepolia(){
+  return walletState.chainId===SEPOLIA_CHAIN_ID;
+}
+function renderWalletStatus(){
+  const walletButton=document.getElementById('walletButton');
+  const networkStatus=document.getElementById('networkStatus');
+  if(!walletButton || !networkStatus) return;
+
+  walletButton.className='chip wallet-chip '+(walletState.account?'':'off');
+  walletButton.textContent=walletState.account?`👛 ${shortAddress(walletState.account)}`:'👛 尚未連線';
+  walletButton.title=walletState.account||'連接 MetaMask、OKX Wallet 或其他 EVM 錢包';
+
+  if(!window.ethereum){
+    networkStatus.className='chip off';
+    networkStatus.textContent='網路:未安裝錢包';
+    return;
+  }
+  if(walletState.chainId===null){
+    networkStatus.className='chip off';
+    networkStatus.textContent='網路:未偵測';
+  }else if(isSepolia()){
+    networkStatus.className='chip';
+    networkStatus.textContent='✓ Sepolia';
+  }else{
+    networkStatus.className='chip bad';
+    networkStatus.textContent=`⚠ 錯誤網路 (${walletState.chainId})`;
+  }
+}
+function walletErrorMessage(error, fallback){
+  if(error?.code===4001 || error?.info?.error?.code===4001) return '你已取消錢包連線、切換網路或交易簽署。';
+  if(error?.code===4902 || error?.info?.error?.code===4902) return '錢包尚未設定 Sepolia,請先在錢包中加入 Sepolia 測試網。';
+  return error?.shortMessage || error?.info?.error?.message || error?.message || fallback;
+}
+async function refreshWalletState(requestAccounts=false){
+  if(!window.ethereum){
+    walletState.account=null;
+    walletState.chainId=null;
+    renderWalletStatus();
+    return null;
+  }
+  const accounts=await window.ethereum.request({method:requestAccounts?'eth_requestAccounts':'eth_accounts'});
+  const chainId=await window.ethereum.request({method:'eth_chainId'});
+  walletState.account=accounts?.[0]||null;
+  walletState.chainId=parseChainId(chainId);
+  renderWalletStatus();
+  if(state.view==='settings') render();
+  return walletState.account;
+}
+async function connectWallet(){
+  if(!window.ethereum){
+    const message='找不到 EVM 瀏覽器錢包。請安裝或啟用 MetaMask、OKX Wallet 等錢包後重試。';
+    alert(message);
+    toast(message);
+    return null;
+  }
+  try{
+    return await refreshWalletState(true);
+  }catch(error){
+    console.error('Wallet connection failed:',error);
+    const message=walletErrorMessage(error,'錢包連線失敗。');
+    toast(message);
+    return null;
+  }
+}
+async function switchToSepolia(){
+  if(!window.ethereum){
+    const message='找不到 EVM 瀏覽器錢包,無法切換到 Sepolia。';
+    alert(message);
+    toast(message);
+    return false;
+  }
+  try{
+    await window.ethereum.request({
+      method:'wallet_switchEthereumChain',
+      params:[{chainId:SEPOLIA_CHAIN_HEX}]
+    });
+    await refreshWalletState(false);
+    return isSepolia();
+  }catch(error){
+    console.error('Sepolia switch failed:',error);
+    toast(walletErrorMessage(error,'無法切換到 Sepolia,請在錢包中手動切換後重試。'));
+    return false;
+  }
+}
+async function initWallet(){
+  renderWalletStatus();
+  if(!window.ethereum) return;
+  window.ethereum.on?.('accountsChanged',(accounts)=>{
+    walletState.account=accounts?.[0]||null;
+    renderWalletStatus();
+    if(state.view==='settings') render();
+  });
+  window.ethereum.on?.('chainChanged',(chainId)=>{
+    walletState.chainId=parseChainId(chainId);
+    renderWalletStatus();
+    if(state.view==='settings') render();
+  });
+  try{
+    await refreshWalletState(false);
+  }catch(error){
+    console.error('Initial wallet state check failed:',error);
+  }
+}
+
+/* ---------- DPP metadata helpers ---------- */
+function stableStringify(value){
+  if(Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
+  if(value!==null && typeof value==='object'){
+    return `{${Object.keys(value).sort().map(key=>`${JSON.stringify(key)}:${stableStringify(value[key])}`).join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+function buildMetadataJson(){
+  const publicData={};
+  const encryptedData={};
+  const attributes=FIELDS.map(field=>{
+    if(field.disclosure==='public'){
+      publicData[field.key]=field.val;
+      return {trait_type:field.label,value:field.val,visibility:'public'};
+    }
+    // Demo-only placeholder: this is a label, not cryptographic encryption.
+    encryptedData[field.key]=`ENC(DEMO_ONLY:${field.key})`;
+    return {trait_type:field.label,value:'Encrypted (demo placeholder)',visibility:'private'};
+  });
+  return {
+    name:`Evergreen DPP ${DPP_ORDER} · ${DPP_STAGE}`,
+    description:'Factory-issued Digital Product Passport demo for the Evergreen dyeing and finishing stage.',
+    attributes,
+    dpp:{
+      schema:DPP_SCHEMA,
+      order:DPP_ORDER,
+      stage:DPP_STAGE,
+      previousTokenId:DPP_PREVIOUS_TOKEN_ID,
+      factoryDid:FACTORY_DID,
+      publicData,
+      encryptedData,
+      encryptionNotice:'DEMO_ONLY_NOT_REAL_ENCRYPTION'
+    }
+  };
+}
+function computeDPPHashes(metadata){
+  const canonicalJson=stableStringify(metadata);
+  return {
+    canonicalJson,
+    metadataHash:ethers.keccak256(ethers.toUtf8Bytes(canonicalJson)),
+    schemaHash:ethers.keccak256(ethers.toUtf8Bytes(DPP_SCHEMA)),
+    orderHash:ethers.keccak256(ethers.toUtf8Bytes(DPP_ORDER)),
+    stage:ethers.keccak256(ethers.toUtf8Bytes(DPP_STAGE))
+  };
+}
+async function uploadMetadataToIPFS(metadata){
+  console.log('DPP metadata (mock IPFS upload):',metadata);
+  // TODO: send metadata to a local backend that owns Pinata/Arweave credentials.
+  // Never put an IPFS API key or secret in this frontend.
+  return {
+    cid:'bafy-demo-cid',
+    tokenURI:'ipfs://bafy-demo-cid/metadata.json'
+  };
+}
+function metadataCacheKey(tokenId){
+  return `dpp-demo-metadata:${CONTRACT_ADDRESS}:${tokenId}`;
+}
+function saveMintedMetadataCache(tokenId,chainState){
+  const key=metadataCacheKey(tokenId);
+  const cacheRecord={
+    contractAddress:CONTRACT_ADDRESS,
+    tokenId:String(tokenId),
+    tx:chainState.tx,
+    tokenURI:chainState.tokenURI,
+    metadataHash:chainState.metadataHash,
+    metadata:chainState.metadata,
+    canonicalJson:chainState.canonicalJson,
+    savedAt:new Date().toISOString(),
+    note:'LOCAL_DEMO_CACHE_ONLY_NOT_ON_CHAIN'
+  };
+  try{
+    localStorage.setItem(key,JSON.stringify(cacheRecord));
+    return key;
+  }catch(error){
+    console.warn('Unable to save local DPP metadata cache:',error);
+    return null;
+  }
+}
+function loadMintedMetadataCache(tokenId){
+  try{
+    const value=localStorage.getItem(metadataCacheKey(tokenId));
+    return value?JSON.parse(value):null;
+  }catch(error){
+    console.warn('Unable to load local DPP metadata cache:',error);
+    return null;
+  }
+}
+/*
+TODO: Future "My DPP NFTs" metadata read priority:
+1. Read tokenURI and dppRecords from the chain.
+2. Fetch metadata from IPFS / Arweave when tokenURI is real and reachable.
+3. For the mocked tokenURI, try loadMintedMetadataCache(tokenId).
+4. Otherwise show: "Metadata JSON not available because IPFS upload is still mocked."
+*/
+
+/* ---------- Views ---------- */
+function vHome(){
+  const verN=state.requests.filter(r=>r.status==='pending').length;
+  return `
+  <div class="eyebrow">工廠端 Endpoint</div><h1>首頁</h1>
+  <h2>待辦</h2>
+  <div class="card" style="border-left:4px solid var(--accent)">
+    <div class="row"><b>📥 1 筆新政策待決策</b><span class="pill">來自 LongAdvance · 買家 B · 訂單 #A2207</span>
+    <span class="right"></span><button class="btn pri" onclick="go('inbox')">前往決策 →</button></div>
+    <p style="margin:6px 0 0">截止 2026-06-25</p>
+  </div>
+  ${verN?`<div class="card" style="border-left:4px solid var(--jewel)">
+    <div class="row"><b>🔎 ${verN} 筆驗證請求</b><span class="pill">歐盟主管機關 想驗「廢水 COD」加密值</span>
+    <span class="right"></span><button class="btn" onclick="go('verify')">檢視 →</button></div></div>`:''}
+
+  <h2>本廠在供應鏈的位置(本批 #A2207)</h2>
+  <div class="scbar">
+    <span class="st done">poly ✓</span><span>→</span>
+    <span class="st done">spin ✓</span><span>→</span>
+    <span class="st done">weave ✓</span><span>→</span>
+    <span class="st cur">染整(你在這)◷</span><span>→</span>
+    <span class="st">cmt</span><span>→</span><span class="st">DPP</span>
+  </div>
+  <p class="vis">只顯示本段與前後棒狀態;不揭露其他工廠身分(藏供應圖)。</p>
+
+  <h2>系統健康</h2>
+  <div class="grid2">
+    <div class="card"><b>🟢 Endpoint 上線</b><p>本地服務運行中,離線時可先處理、連線後續傳。</p></div>
+    <div class="card"><b>🔐 TEE 已連線 · 👛 ${walletState.account?'錢包已連線':'錢包尚未連線'}</b><p>${walletState.account?'已可使用目前錢包簽署 Sepolia 交易。':'請使用頁面上方按鈕連接 EVM 瀏覽器錢包。'}</p></div>
+  </div>
+  <div class="callout info"><div class="t">🛈 本批最終護照</div>尚未完成 —— 到 cmt 完成後,這裡會出現 DPP 連結 / QR Code(唯讀)。</div>`;
+}
+
+function vInbox(){
+  return `${stepper('inbox')}<h1>政策收件匣</h1>
+  <p>雲端(我們 / DPP 發行方)送來「要收哪些特徵、保存多久」。對應架構圖①下行箭頭。</p>
+  <div class="card" style="border-left:4px solid var(--accent)">
+    <div class="row"><b>🟦 收集政策 · 訂單 #A2207 · 買家 B</b><span class="right"></span><span class="chip">數位簽章 ✓ 已驗證</span></div>
+    <div class="kv">發送方:LongAdvance 平台</div>
+    <div class="kv">要收集:染整階段 <b>9 個特徵</b> · 保存年限:10 年</div>
+    <div class="kv">揭露對象:歐盟主管機關 / 買家 / 消費者(各自最小集)</div>
+    <div class="kv">截止:2026-06-25</div>
+    <div class="row" style="margin-top:12px">
+      <button class="btn pri" onclick="go('disclose')">檢視並決策 →</button>
+      <button class="btn ghost" onclick="showPolicyJson()">看政策 JSON ▾</button>
+    </div>
+  </div>
+  <div class="callout key"><div class="t">✓ 為什麼可信</div>這份政策用平台私鑰簽章,你的 endpoint 用平台公鑰驗過了(數位簽章)。若驗章失敗會擋下並警示。</div>`;
+}
+
+function vDisclose(){
+  let rows='',lastGrp='';
+  for(const f of FIELDS){
+    if(f.grp!==lastGrp){rows+=`<tr class="grphead"><td colspan="4">▸ ${f.grp}</td></tr>`;lastGrp=f.grp;}
+    const pub=f.disclosure==='public';
+    const who=pub?'<span class="who">全部</span>':'<span class="who">工廠</span><span class="who">驗證後的驗證者</span>';
+    rows+=`<tr>
+      <td>${pub?'🌐':'🔒'} ${f.label} ${f.sensitive?'<span class="jewelmark">⚠機密</span>':''}</td>
+      <td class="fval">${f.val}</td>
+      <td><span class="seg">
+        <button class="pub ${pub?'on':''}" onclick="setDisc('${f.id}','public')">🌐 公開</button>
+        <button class="pri ${!pub?'on':''}" onclick="setDisc('${f.id}','private')">🔒 加密</button>
+      </span></td>
+      <td class="vis">${who}</td>
+    </tr>`;
+  }
+  return `${stepper('disclose')}<h1>揭露決策工作台</h1>
+  <p>雲端要的 <b>9 個欄位全部都會送出</b>。你設為<b>公開</b>的以明文上傳;其餘以<b>密文</b>上傳,平台讀不到,需你給鑰匙才解。</p>
+  <div class="summary">
+    <div>邊界摘要</div>
+    <div>🌐 公開 <span class="big" style="color:var(--good)">${pubCount()}</span></div>
+    <div>🔒 加密 <span class="big" style="color:var(--jewel)">${priCount()}</span></div>
+    <span class="right"></span>
+    <button class="btn" onclick="applyRec()">套用建議設定</button>
+  </div>
+  <table class="ftable">
+    <tr><th>欄位</th><th>值(預覽)</th><th>揭露</th><th>可見對象</th></tr>
+    ${rows}
+  </table>
+  <div class="callout jewel"><div class="t">🛡 為什麼能放心</div>加密欄位送到雲端是「打不開的密文」。鑰匙留在你的 TEE,平台與其他工廠都讀不到。文件預設只上傳雜湊,本體留在你這。</div>
+  <div class="row"><span class="right"></span><button class="btn pri" onclick="go('preprocess')">下一步:預處理 →</button></div>`;
+}
+
+function vPreprocess(){
+  const done=state.preprocessed;
+  return `${stepper('preprocess')}<h1>預處理</h1>
+  <p>把原始資料整成上傳格式。程式碼公開可稽核。</p>
+  <div class="card">
+    <div class="kv">來源:本地 MES 匯出 <code>dye_log_2207.csv</code></div>
+    <div class="kv">腳本:<code>dye-preprocess v1.4</code> · 程式碼雜湊 <code>9f2c…</code> · ☑ 公開可稽核</div>
+    <div class="row" style="margin-top:10px"><button class="btn pri" onclick="runPre()" ${done?'disabled':''}>▶ 執行預處理</button>
+      <span id="preState" class="vis">${done?'✓ 完成 · 9/9 欄位已對齊':''}</span></div>
+    <div class="bar"><i id="preBar" style="width:${done?100:0}%"></i></div>
+  </div>
+  <div id="preOut">${done?preOutHTML():''}</div>`;
+}
+function preOutHTML(){
+  const o={stage:'dye-fnsh', order:'#A2207'};
+  FIELDS.forEach(f=>o[f.key]= f.disclosure==='public'? f.val : 'ENC(🔒 加密)');
+  return `<h3>預覽:正規化後的 canonical JSON(送出前的樣子)</h3>
+  <pre class="code">${JSON.stringify(o,null,2).replace(/</g,'&lt;')}</pre>
+  <div class="callout key"><div class="t">✓ 對應檢查</div>雲端要的 9 欄位 → 已對齊 9/9。其中 🌐 ${pubCount()} 公開、🔒 ${priCount()} 加密(送出前仍可回上一步調整)。</div>
+  <div class="row"><span class="right"></span><button class="btn pri" onclick="go('boundary')">下一步:加密與送出 →</button></div>`;
+}
+
+function vBoundary(){
+  const pub=FIELDS.filter(f=>f.disclosure==='public');
+  const pri=FIELDS.filter(f=>f.disclosure==='private');
+  return `${stepper('boundary')}<h1>即將送出 · 邊界預覽</h1>
+  <p>下面是「會離開你工廠」的封包內容。確認後即上傳並上鏈,<b>上鏈後不可修改</b>。</p>
+
+  <div class="bdcol pub"><h4>🌐 會以「明文」離開(任何人可見) · ${pub.length}</h4>
+    ${pub.map(f=>`<div class="kv">${f.label} = ${f.val}</div>`).join('')||'<div class="kv">(無)</div>'}</div>
+
+  <div class="bdcol pri"><h4>🔒 會以「密文」離開(平台讀不到,需你放行才可解) · ${pri.length}</h4>
+    ${pri.map(f=>`<div class="kv">${f.label} = ••••••••</div>`).join('')||'<div class="kv">(無)</div>'}
+    <div class="kv" style="margin-top:6px;color:var(--jewel)">└ 加密金鑰:本地產生,已托管 TEE(可隨時撤回)</div></div>
+
+  <div class="bdcol att"><h4>🧾 一起送出的還有(防竄改用,不含內容)</h4>
+    <div class="kv">完整紀錄雜湊 9f2c… · 各文件雜湊 · 你的數位簽章</div>
+    <div class="kv">製程階段 ID:dye-fnsh · 前一段參考:weave token #1041</div></div>
+
+  <div class="callout key"><div class="t">🛡 平台拿到後</div>能驗章確認是你送的,但讀不到任何 🔒 欄位。</div>
+
+  <div class="row">保護模式:
+    <select id="mode">
+      <option>工廠保留鑰匙(CP-ABE)· 最保守</option>
+      <option>指定機關持私鑰(EU)</option>
+      <option selected>TEE 條件釋放(建議)</option>
+      <option>代理重加密(動態轉鎖)</option>
+    </select>
+    <button class="btn ghost" onclick="go('preprocess')">看完整 JSON ▾</button>
+  </div>
+  <div class="row" style="margin-top:14px">
+    <button class="btn" onclick="go('disclose')">← 回去改揭露設定</button>
+    <span class="right"></span>
+    <button class="btn pri" onclick="askSign()">🔏 簽署並送出</button>
+  </div>`;
+}
+
+function vChain(){
+  if(!state.chain){
+    return `${stepper('chain')}<h1>上鏈狀態</h1><div class="callout info"><div class="t">🛈 尚未送出</div>請先在「加密與送出」完成簽署。<div class="row" style="margin-top:8px"><button class="btn" onclick="go('boundary')">前往送出 →</button></div></div>`;
+  }
+  const c=state.chain;
+  const li=(k,label)=>`<li class="${c.step>k?'done':(c.step===k?'cur':'')}"><span class="dot">${c.step>k?'✓':k+1}</span>${label}</li>`;
+  return `${stepper('chain')}<h1>上鏈狀態 · 染整 #A2207</h1>
+  <ul class="timeline">
+    ${li(0,'連接錢包並確認 Sepolia')}
+    ${li(1,'建立並雜湊 DPP metadata')}
+    ${li(2,'模擬上傳 IPFS')}
+    ${li(3,'送出 mintDPP 交易')}
+    ${li(4,'等待鏈上確認')}
+  </ul>
+  ${c.error?`<div class="callout warn"><div class="t">⚠ Mint 未完成</div>${escapeHTML(c.error)}</div>`:''}
+  ${c.tx?`<div class="card">
+    <div class="kv">Token ID:<b>${c.tokenId!==null&&c.tokenId!==undefined?'#'+escapeHTML(c.tokenId):'事件未解析'}</b></div>
+    <div class="kv">交易雜湊:<code>${escapeHTML(c.tx)}</code> &nbsp;<a class="pill" href="https://sepolia.etherscan.io/tx/${encodeURIComponent(c.tx)}" target="_blank" rel="noopener noreferrer">Sepolia Etherscan ↗</a></div>
+    <div class="kv">時間戳:${escapeHTML(c.time||'等待確認')}</div>
+    <div class="kv">Token URI:${escapeHTML(c.tokenURI||'')}</div>
+    <div class="kv">Metadata 雜湊:${escapeHTML(c.metadataHash||'')}</div>
+    <div class="kv">前一段參考:weave token #1041</div>
+    <div class="kv" style="color:${c.status==='confirmed'?'var(--good)':'var(--accent)'}">狀態:${c.status==='confirmed'?'🟢 已確認 · 不可竄改':'⏳ 交易已送出,等待確認'}</div>
+    <div class="callout jewel" style="margin-top:10px"><div class="t">🔒 你保留的</div>本批加密欄位的鑰匙(在 TEE)。任何人想看,需走「驗證請求」由你放行。</div>
+    ${c.metadata?`
+      <h3>本次送出的 DPP Metadata JSON</h3>
+      <p class="vis">供人員檢視的 pretty JSON。</p>
+      <pre class="code">${escapeHTML(JSON.stringify(c.metadata,null,2))}</pre>
+      ${c.canonicalJson?`<details>
+        <summary><b>Canonical JSON used for metadataHash</b></summary>
+        <p class="vis">下列無空白、鍵值排序後的字串是 metadataHash 的實際輸入。</p>
+        <pre class="code">${escapeHTML(c.canonicalJson)}</pre>
+      </details>`:''}
+      <div class="callout info">
+        <div class="t">🛈 Metadata 儲存位置</div>
+        目前 IPFS upload 仍為 mock，因此完整 JSON 會先保存在 localStorage demo cache。鏈上只保存 tokenURI、metadataHash 與 DPP record 欄位（schemaHash、orderHash、stage、previousTokenId、issuer、createdAt）；未來接上真實 IPFS / Arweave 後，前端應從 tokenURI 抓回 metadata JSON。
+        <div class="kv">Cache note:<code>LOCAL_DEMO_CACHE_ONLY_NOT_ON_CHAIN</code></div>
+        <div class="kv">Cache key:${escapeHTML(c.metadataCacheKey||'等待 tokenId 後建立 / localStorage 無法使用')}</div>
+      </div>
+    `:''}
+    ${c.status==='confirmed'?'<div class="row"><span class="right"></span><button class="btn pri" onclick="go(\'home\')">完成 · 回首頁</button></div>':''}
+  </div>`:(c.error?'':`<div class="callout info"><div class="t">⏳ 處理中</div>${escapeHTML(c.message||'正在準備交易,請稍候…')}</div>`)}`;
+}
+
+function vKeys(){
+  return `<h1>金鑰管理</h1>
+  <div class="card"><b>根金鑰</b> · 🔐 本地安全元件 / TEE 托管 · 狀態正常 <button class="btn ghost right" onclick="toast('（Demo）已排程根金鑰輪替')">輪替根金鑰</button></div>
+  <h2>各批次 / 政策的鑰匙</h2>
+  ${state.keys.map(k=>`<div class="card"><div class="row"><b>${k.label}</b><span class="pill">加密欄位 ${k.enc}</span><span class="pill">紀元 ${k.epoch}</span><span class="chip">🟢 ${k.status}</span>
+    <span class="right"></span><button class="btn warn" onclick="toast('（Demo）已對 ${k.label} 換鎖(輪替 ${k.epoch}→下一紀元)')">撤回 / 換鎖</button></div></div>`).join('')}
+  <h2>已授權的解密對象</h2>
+  ${state.grants.length?state.grants.map(g=>`<div class="card"><div class="row"><b>${g.who}</b><span class="vis">${g.scope}</span><span class="right"></span><button class="btn warn" onclick="revoke('${g.id}')">撤回存取</button></div></div>`).join(''):'<div class="callout info">目前沒有對外授權的解密對象。</div>'}
+  <div class="callout key"><div class="t">🛈 撤回 = 換鎖</div>撤回是「金鑰輪替」,只影響選定欄位 / 對象,不必重碰整批資料(O5)。</div>`;
+}
+
+function vVC(){
+  return `<h1>憑證夾(VC · Holder)</h1>
+  <p>Endpoint 是 VC 的持有者:把製程包成 W3C VC 存本地,出示時用 <b>SD-JWT 選擇性揭露</b>。</p>
+  <div class="card">
+    <div class="row"><b>🎫 染整製程憑證 · 訂單 #A2207</b><span class="right"></span><span class="chip">🟢 有效</span></div>
+    <div class="kv">發行者:本廠自簽 / Kanesh 認證</div>
+    <div class="kv">含 claims:batch · ΔE · fastness · COD · recipe(可選擇揭露)</div>
+  </div>
+  <h2>建立揭露出示(只露需要的)</h2>
+  <div class="card">
+    <div class="kv">揭露給:歐盟主管機關</div>
+    <div class="row" style="margin:8px 0">
+      <label><input type="checkbox" checked> ΔE</label>
+      <label><input type="checkbox" checked> fastness</label>
+      <label><input type="checkbox" checked> COD</label>
+      <label><input type="checkbox"> recipe</label>
+      <label><input type="checkbox"> 機台參數</label>
+    </div>
+    <button class="btn pri" onclick="toast('（Demo）已產生 SD-JWT 出示 + QR;對方可密碼學驗真,看不到未勾選欄位')">產生出示 (SD-JWT / QR)</button>
+  </div>
+  <div class="callout info"><div class="t">🛈 與一般 VC 不同的點</div>本情境 Issuer 不一定知道 Holder 的明文。發行只對「承諾 / 雜湊」背書;真正明文由你(Holder)在<b>出示時</b>才選擇性揭露。</div>`;
+}
+
+function vVerify(){
+  const reqs=state.requests;
+  return `<h1>驗證請求</h1>
+  <p>驗證者要看<b>加密</b>資料時的入口。對應架構圖右側 Smart Contract ✓/✗。</p>
+  ${reqs.map(r=>`<div class="card" style="border-left:4px solid ${r.status==='pending'?'var(--jewel)':(r.status==='approved'?'var(--good)':'var(--warn)')}">
+    <div class="row"><b>🔎 ${r.who} 申請存取</b><span class="right"></span>${r.status==='pending'?'<span class="chip demo">待處理</span>':(r.status==='approved'?'<span class="chip">✓ 已放行</span>':'<span class="chip" style="background:var(--warnBg);color:var(--warn);border-color:#f0dcc0">已拒絕</span>')}</div>
+    <div class="kv">對象:訂單 #A2207「${r.field}」(🔒)</div>
+    <div class="kv">理由:${r.reason} · 憑證:${r.vc} · 範圍:${r.scope}</div>
+    ${r.status==='pending'?`<div class="row" style="margin-top:10px"><button class="btn" onclick="setReq('${r.id}','denied')">拒絕</button><button class="btn pri" onclick="setReq('${r.id}','approved')">放行(釋放鑰匙)</button></div>`:''}
+  </div>`).join('')}
+  <div class="callout jewel"><div class="t">🛈 放行 = 條件式鑰匙釋放</div>智能合約 / TEE 在符合條件時把「該欄位」的解密能力給對方;你可隨時在金鑰管理撤回。其他欄位不受影響。</div>`;
+}
+
+function vSimple(title,body){return `<h1>${title}</h1>${body}`;}
+
+function render(){
+  renderNav();
+  const v=state.view;
+  const map={home:vHome,inbox:vInbox,disclose:vDisclose,preprocess:vPreprocess,boundary:vBoundary,chain:vChain,keys:vKeys,vc:vVC,verify:vVerify};
+  let html;
+  if(map[v]) html=map[v]();
+  else if(v==='events') html=vSimple('事件與通知',`<div class="card"><ul class="timeline">
+    <li class="done"><span class="dot">✓</span>收到收集政策 #A2207(剛剛)</li>
+    <li class="done"><span class="dot">✓</span>weave 批次 #A2206 已上鏈(2 小時前)</li>
+    <li class="done"><span class="dot">✓</span>歐盟主管機關 提出驗證請求(今天)</li>
+  </ul></div><div class="callout info"><div class="t">🛈 Email 觸發</div>通知只是把待辦帶到眼前,點進來 = 收件匣 / 驗證請求;實際決策都在介面內完成。</div>`);
+  else if(v==='settings') html=vSimple('設定',`<div class="card">
+    <div class="kv">Endpoint 身分(DID):did:web:evergreen-dye.example</div>
+    <div class="kv">錢包位址:${walletState.account?escapeHTML(walletState.account):'尚未連線'}</div>
+    <div class="kv">EVM 網路:${walletState.chainId===null?'未偵測':(isSepolia()?'Sepolia (11155111)':`錯誤網路 (${walletState.chainId})`)}</div>
+    <div class="kv">NFT 合約:${CONTRACT_ADDRESS==='0x0000000000000000000000000000000000000000'?'尚未設定':escapeHTML(CONTRACT_ADDRESS)}</div>
+    <div class="kv">TEE 連線:🟢 已連線</div>
+    <div class="kv">預處理腳本:dye-preprocess v1.4(自動更新:開)</div>
+    <div class="kv">部署模式:on-prem</div>
+    <div class="kv">預設保護模式:TEE 條件釋放</div>
+    <div class="kv">語言:繁體中文</div>
+  </div>`);
+  else html=vSimple('—','');
+  document.getElementById('main').innerHTML=html;
+  renderWalletStatus();
+}
+
+/* ---------- 互動 ---------- */
+function setDisc(id,val){
+  const f=FIELDS.find(x=>x.id===id);
+  if(f.disclosure===val) return;
+  if(val==='public' && f.sensitive){
+    openModal(`<h3>⚠ 公開機密欄位?</h3>
+      <p>「<b>${f.label}</b>」被標為商業機密(皇冠寶石)。公開後任何人都看得到,且上鏈後不可收回明文。確定嗎?</p>
+      <div class="row"><span class="right"></span><button class="btn" onclick="closeModal()">取消</button>
+      <button class="btn warn" onclick="closeModal();doSetDisc('${id}','public')">仍要公開</button></div>`);
+    return;
+  }
+  doSetDisc(id,val);
+}
+function doSetDisc(id,val){FIELDS.find(x=>x.id===id).disclosure=val; state.preprocessed=false; render();}
+function applyRec(){FIELDS.forEach(f=>f.disclosure=f.rec); state.preprocessed=false; toast('已套用建議設定'); render();}
+
+function runPre(){
+  const bar=document.getElementById('preBar'); const st=document.getElementById('preState');
+  let p=0; st.textContent='正在正規化欄位…';
+  const t=setInterval(()=>{p+=20; if(bar)bar.style.width=p+'%';
+    if(p>=100){clearInterval(t); state.preprocessed=true; render();}},180);
+}
+
+function askSign(){
+  openModal(`<h3>🔏 簽署並送出</h3>
+    <p>你即將用<b>瀏覽器錢包</b>在 Sepolia 簽署並送出本批封包。錢包會要求確認交易;送出後鏈上紀錄<b>不可修改</b>。</p>
+    <p class="vis">🌐 公開 ${pubCount()} · 🔒 加密 ${priCount()} · 保護模式:TEE 條件釋放</p>
+    <div class="row"><span class="right"></span><button class="btn" onclick="closeModal()">取消</button>
+    <button class="btn pri" onclick="closeModal();doSign()">確認簽署(👛 錢包)</button></div>`);
+}
+async function doSign(){
+  state.chain={
+    step:0,status:'preparing',message:'正在連接錢包並確認 Sepolia…',
+    tx:null,tokenId:null,time:null,metadataHash:null,tokenURI:null,error:null,
+    metadata:null,canonicalJson:null,metadataCacheKey:null
+  };
+  go('chain');
+  try{
+    if(typeof ethers==='undefined') throw new Error('ethers.js 載入失敗,請檢查網路連線後重新整理頁面。');
+    if(!window.ethereum) throw new Error('找不到 EVM 瀏覽器錢包。請安裝或啟用 MetaMask、OKX Wallet 等錢包。');
+
+    const account=walletState.account||await connectWallet();
+    if(!account) throw new Error('尚未取得錢包帳號。請允許網站連接錢包後重試。');
+    if(!isSepolia()){
+      const switched=await switchToSepolia();
+      if(!switched) throw new Error('目前不是 Sepolia,而且網路切換未完成。');
+    }
+
+    state.chain.step=1;
+    state.chain.message='正在建立 canonical metadata 並計算 keccak256…';
+    render();
+    const metadata=buildMetadataJson();
+    const hashes=computeDPPHashes(metadata);
+    state.chain.metadata=metadata;
+    state.chain.canonicalJson=hashes.canonicalJson;
+    state.chain.metadataHash=hashes.metadataHash;
+
+    state.chain.step=2;
+    state.chain.message='正在執行 demo-only IPFS 上傳…';
+    render();
+    const upload=await uploadMetadataToIPFS(metadata);
+    state.chain.tokenURI=upload.tokenURI;
+
+    if(!ethers.isAddress(CONTRACT_ADDRESS) || CONTRACT_ADDRESS===ethers.ZeroAddress){
+      throw new Error('NFT 合約位址尚未設定。請先用 Remix 部署 SimpleDPPNFT.sol,再填入 CONTRACT_ADDRESS。');
+    }
+
+    const provider=new ethers.BrowserProvider(window.ethereum);
+    const network=await provider.getNetwork();
+    if(Number(network.chainId)!==SEPOLIA_CHAIN_ID) throw new Error('錢包目前不是 Sepolia,請切換後重試。');
+    const signer=await provider.getSigner();
+    const recipient=await signer.getAddress();
+    const contract=new ethers.Contract(CONTRACT_ADDRESS,CONTRACT_ABI,signer);
+
+    state.chain.step=3;
+    state.chain.message='請在錢包中確認 mintDPP 交易…';
+    render();
+    const tx=await contract.mintDPP(
+      recipient,
+      upload.tokenURI,
+      hashes.metadataHash,
+      hashes.schemaHash,
+      hashes.orderHash,
+      hashes.stage,
+      BigInt(DPP_PREVIOUS_TOKEN_ID)
+    );
+    state.chain.tx=tx.hash;
+    state.chain.step=4;
+    state.chain.status='pending';
+    state.chain.message='交易已送出,等待 Sepolia 確認…';
+    render();
+
+    const receipt=await tx.wait();
+    let tokenId=null;
+    for(const log of receipt.logs){
+      try{
+        const parsed=contract.interface.parseLog(log);
+        if(parsed?.name==='DPPMinted'){
+          tokenId=parsed.args.tokenId.toString();
+          break;
+        }
+      }catch(parseError){
+        // The receipt also contains ERC-721 logs that are not DPPMinted.
+      }
+    }
+
+    state.signed=true;
+    state.chain.step=5;
+    state.chain.status='confirmed';
+    state.chain.tokenId=tokenId;
+    state.chain.time=new Date().toISOString();
+    if(tokenId){
+      state.chain.metadataCacheKey=saveMintedMetadataCache(tokenId,state.chain);
+    }
+    state.chain.message=tokenId?`DPP NFT #${tokenId} 已確認。`:'交易已確認,但未能解析 DPPMinted event。';
+    render();
+    toast(state.chain.message);
+  }catch(error){
+    console.error('DPP mint failed:',error);
+    state.chain.status='error';
+    state.chain.error=walletErrorMessage(error,'Mint 失敗,請查看瀏覽器 console。');
+    render();
+    toast(state.chain.error);
+  }
+}
+
+function setReq(id,status){
+  const r=state.requests.find(x=>x.id===id); r.status=status;
+  if(status==='approved'){state.grants.push({id:'g'+Date.now(), who:r.who, scope:'限「廢水 COD」· 一次性 · 90 天'}); toast('已放行:智能合約 / TEE 將釋放該欄位的解密能力');}
+  else toast('已拒絕該存取請求');
+  render();
+}
+function revoke(id){state.grants=state.grants.filter(g=>g.id!==id); toast('已撤回存取(換鎖 / 金鑰輪替)'); render();}
+
+function showPolicyJson(){
+  openModal(`<h3>政策 JSON</h3><pre class="code">{
+  "order": "#A2207",
+  "issuer": "LongAdvance",
+  "signature": "verified ✓",
+  "retention_years": 10,
+  "features": [
+    "machineId","stenterParam","batch","recipe",
+    "deltaE","fastness","cod","testReport","grsCert"
+  ]
+}</pre><div class="row"><span class="right"></span><button class="btn" onclick="closeModal()">關閉</button></div>`);
+}
+
+/* ---------- modal / toast ---------- */
+function openModal(html){document.getElementById('modalBody').innerHTML=html;document.getElementById('modal').classList.remove('hidden');}
+function closeModal(){document.getElementById('modal').classList.add('hidden');}
+function toast(msg){
+  const d=document.createElement('div');
+  d.textContent=msg;
+  d.style.cssText='position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#20211c;color:#fff;padding:10px 18px;border-radius:999px;font-size:13.5px;z-index:80;box-shadow:0 8px 24px rgba(0,0,0,.25)';
+  document.body.appendChild(d); setTimeout(()=>d.remove(),2600);
+}
+document.getElementById('modal').addEventListener('click',e=>{if(e.target.id==='modal')closeModal();});
+
+render();
+initWallet();
+</script>
+</body>
+</html>

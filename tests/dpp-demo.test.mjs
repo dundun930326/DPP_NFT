@@ -1,0 +1,469 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import test from "node:test";
+import vm from "node:vm";
+import { fileURLToPath } from "node:url";
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const HTML_PATH = path.join(ROOT, "factory-endpoint.html");
+const CONTRACT_PATH = path.join(ROOT, "contracts", "SimpleDPPNFT.sol");
+const DEPLOYED_SEPOLIA_ADDRESS =
+  "0x24aeeb254a48820b5b0bdcbdce980a725535718f";
+
+const html = fs.readFileSync(HTML_PATH, "utf8");
+const contract = fs.existsSync(CONTRACT_PATH)
+  ? fs.readFileSync(CONTRACT_PATH, "utf8")
+  : "";
+
+function metadataHelpersSource() {
+  const startMarker = "/* ---------- DPP metadata helpers ---------- */";
+  const endMarker = "/* ---------- Views ---------- */";
+  const start = html.indexOf(startMarker);
+  const end = html.indexOf(endMarker);
+
+  assert.notEqual(start, -1, `Missing ${startMarker}`);
+  assert.notEqual(end, -1, `Missing ${endMarker}`);
+  assert.ok(end > start, "Metadata helper block must precede the views");
+  return html.slice(start + startMarker.length, end);
+}
+
+function loadMetadataHelpers(fields) {
+  const localStorageEntries = new Map();
+  const context = vm.createContext({
+    FIELDS: structuredClone(fields),
+    CONTRACT_ADDRESS: DEPLOYED_SEPOLIA_ADDRESS,
+    DPP_SCHEMA: "dpp-dye-fnsh-v1",
+    DPP_ORDER: "#A2207",
+    DPP_STAGE: "dye-fnsh",
+    DPP_PREVIOUS_TOKEN_ID: 1041,
+    FACTORY_DID: "did:web:evergreen-dye.example",
+    Date,
+    localStorage: {
+      setItem(key, value) {
+        localStorageEntries.set(key, String(value));
+      },
+      getItem(key) {
+        return localStorageEntries.get(key) ?? null;
+      },
+      removeItem(key) {
+        localStorageEntries.delete(key);
+      },
+    },
+    console: { log() {}, warn() {} },
+    ethers: {
+      toUtf8Bytes(value) {
+        return `utf8:${value}`;
+      },
+      keccak256(value) {
+        return `keccak256(${value})`;
+      },
+    },
+  });
+
+  vm.runInContext(
+    `${metadataHelpersSource()}
+this.stableStringify = stableStringify;
+this.buildMetadataJson = buildMetadataJson;
+this.computeDPPHashes = computeDPPHashes;
+this.uploadMetadataToIPFS = uploadMetadataToIPFS;
+this.metadataCacheKey = typeof metadataCacheKey === 'function' ? metadataCacheKey : undefined;
+this.saveMintedMetadataCache = typeof saveMintedMetadataCache === 'function' ? saveMintedMetadataCache : undefined;
+this.loadMintedMetadataCache = typeof loadMintedMetadataCache === 'function' ? loadMintedMetadataCache : undefined;`,
+    context,
+  );
+  context.localStorageEntries = localStorageEntries;
+  return context;
+}
+
+function inlineApplicationSource() {
+  const inlineScripts = [...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/g)]
+    .map((match) => match[1].trim())
+    .filter(Boolean);
+  assert.equal(inlineScripts.length, 1, "Expected one inline application script");
+  return inlineScripts[0];
+}
+
+function createApplicationContext() {
+  const elements = new Map();
+  const alerts = [];
+  const localStorageEntries = new Map();
+  const makeElement = () => ({
+    innerHTML: "",
+    textContent: "",
+    className: "",
+    title: "",
+    style: {},
+    disabled: false,
+    classList: {
+      add() {},
+      remove() {},
+    },
+    addEventListener() {},
+    appendChild() {},
+    remove() {},
+  });
+  const document = {
+    body: makeElement(),
+    createElement: makeElement,
+    getElementById(id) {
+      if (!elements.has(id)) elements.set(id, makeElement());
+      return elements.get(id);
+    },
+  };
+  const context = vm.createContext({
+    document,
+    localStorage: {
+      setItem(key, value) {
+        localStorageEntries.set(key, String(value));
+      },
+      getItem(key) {
+        return localStorageEntries.get(key) ?? null;
+      },
+      removeItem(key) {
+        localStorageEntries.delete(key);
+      },
+    },
+    console: { log() {}, error() {}, warn() {} },
+    alert(message) {
+      alerts.push(message);
+    },
+    setTimeout(callback) {
+      callback();
+      return 1;
+    },
+    clearTimeout() {},
+    setInterval() {
+      return 1;
+    },
+    clearInterval() {},
+    encodeURIComponent,
+    Date,
+    BigInt,
+  });
+  context.window = context;
+  context.window.scrollTo = () => {};
+  return { context, elements, alerts, localStorageEntries };
+}
+
+test("Solidity contract stores and emits every requested DPP field", () => {
+  assert.match(contract, /contract\s+SimpleDPPNFT\s+is\s+ERC721URIStorage/);
+  assert.match(contract, /struct\s+DPPRecord\s*{[\s\S]*bytes32\s+metadataHash;/);
+  assert.match(contract, /bytes32\s+schemaHash;/);
+  assert.match(contract, /bytes32\s+orderHash;/);
+  assert.match(contract, /bytes32\s+stage;/);
+  assert.match(contract, /uint256\s+previousTokenId;/);
+  assert.match(contract, /address\s+issuer;/);
+  assert.match(contract, /uint256\s+createdAt;/);
+  assert.match(
+    contract,
+    /function\s+mintDPP\s*\(\s*address\s+to,\s*string\s+calldata\s+tokenURI_,\s*bytes32\s+metadataHash,\s*bytes32\s+schemaHash,\s*bytes32\s+orderHash,\s*bytes32\s+stage,\s*uint256\s+previousTokenId\s*\)\s*external\s*returns\s*\(uint256\s+tokenId\)/,
+  );
+  assert.match(contract, /event\s+DPPMinted\s*\(/);
+  assert.match(contract, /emit\s+DPPMinted\s*\(/);
+});
+
+test("HTML exposes the ethers v6 Sepolia wallet and contract configuration", () => {
+  assert.match(
+    html,
+    /https:\/\/cdn\.jsdelivr\.net\/npm\/ethers@6\.17\.0\/dist\/ethers\.umd\.min\.js/,
+  );
+  assert.match(html, /const\s+CONTRACT_ADDRESS\s*=/);
+  assert.match(html, /const\s+CONTRACT_ABI\s*=/);
+  assert.match(html, /const\s+SEPOLIA_CHAIN_ID\s*=\s*11155111/);
+  assert.match(html, /const\s+SEPOLIA_CHAIN_HEX\s*=\s*['"]0xaa36a7['"]/);
+  assert.match(html, /async\s+function\s+connectWallet\s*\(/);
+  assert.match(html, /async\s+function\s+switchToSepolia\s*\(/);
+  assert.match(html, /accountsChanged/);
+  assert.match(html, /chainChanged/);
+});
+
+test("frontend targets the deployed SimpleDPPNFT contract on Sepolia", () => {
+  assert.match(
+    html,
+    new RegExp(
+      `const\\s+CONTRACT_ADDRESS\\s*=\\s*['"]${DEPLOYED_SEPOLIA_ADDRESS}['"]`,
+    ),
+  );
+  assert.match(
+    html,
+    /function mintDPP\(address to,string tokenURI_,bytes32 metadataHash,bytes32 schemaHash,bytes32 orderHash,bytes32 stage,uint256 previousTokenId\)/,
+  );
+  assert.match(
+    html,
+    /event DPPMinted\(uint256 indexed tokenId,address indexed recipient,string tokenURI,bytes32 metadataHash,bytes32 schemaHash,bytes32 orderHash,bytes32 stage,uint256 previousTokenId\)/,
+  );
+});
+
+test("Home health status is derived from live wallet state, not a stale ready label", () => {
+  assert.doesNotMatch(html, /TEE 已連線 · 👛 錢包就緒/);
+  assert.match(
+    html,
+    /walletState\.account\?'錢包已連線':'錢包尚未連線'/,
+  );
+});
+
+test("stableStringify recursively sorts object keys and preserves array order", () => {
+  const helpers = loadMetadataHelpers([]);
+  const value = {
+    z: 1,
+    a: { d: 4, b: 2 },
+    arr: [{ y: 2, x: 1 }, 3],
+  };
+
+  assert.equal(
+    helpers.stableStringify(value),
+    '{"a":{"b":2,"d":4},"arr":[{"x":1,"y":2},3],"z":1}',
+  );
+});
+
+test("buildMetadataJson partitions live FIELDS state without publicizing private attributes", () => {
+  const helpers = loadMetadataHelpers([
+    {
+      id: "public",
+      key: "batch",
+      label: "Batch",
+      val: "B-1",
+      disclosure: "public",
+    },
+    {
+      id: "private",
+      key: "recipe",
+      label: "Recipe",
+      val: "secret-blue",
+      disclosure: "private",
+    },
+  ]);
+
+  const metadata = helpers.buildMetadataJson();
+  const normalized = structuredClone(metadata);
+
+  assert.equal(normalized.name, "Evergreen DPP #A2207 · dye-fnsh");
+  assert.equal(normalized.dpp.publicData.batch, "B-1");
+  assert.match(normalized.dpp.encryptedData.recipe, /^ENC\(DEMO_ONLY:/);
+  assert.equal(normalized.dpp.encryptionNotice, "DEMO_ONLY_NOT_REAL_ENCRYPTION");
+  assert.equal(normalized.dpp.previousTokenId, 1041);
+  assert.equal(
+    normalized.attributes.find((attribute) => attribute.trait_type === "Recipe")
+      .value,
+    "Encrypted (demo placeholder)",
+  );
+  assert.doesNotMatch(
+    JSON.stringify(normalized.attributes),
+    /secret-blue/,
+  );
+});
+
+test("mock IPFS upload returns the documented deterministic URI", async () => {
+  const helpers = loadMetadataHelpers([]);
+  const result = await helpers.uploadMetadataToIPFS({ name: "test" });
+
+  assert.deepEqual(structuredClone(result), {
+    cid: "bafy-demo-cid",
+    tokenURI: "ipfs://bafy-demo-cid/metadata.json",
+  });
+});
+
+test("computeDPPHashes hashes canonical metadata and the fixed DPP identifiers", () => {
+  const helpers = loadMetadataHelpers([]);
+  const hashes = helpers.computeDPPHashes({ z: 2, a: 1 });
+
+  assert.equal(
+    hashes.metadataHash,
+    'keccak256(utf8:{"a":1,"z":2})',
+  );
+  assert.equal(hashes.schemaHash, "keccak256(utf8:dpp-dye-fnsh-v1)");
+  assert.equal(hashes.orderHash, "keccak256(utf8:#A2207)");
+  assert.equal(hashes.stage, "keccak256(utf8:dye-fnsh)");
+});
+
+test("metadata cache helpers save and recover the required local-only record", () => {
+  const helpers = loadMetadataHelpers([]);
+  assert.equal(typeof helpers.metadataCacheKey, "function");
+  assert.equal(typeof helpers.saveMintedMetadataCache, "function");
+  assert.equal(typeof helpers.loadMintedMetadataCache, "function");
+
+  const chainState = {
+    tx: "0xfeed1234",
+    tokenURI: "ipfs://bafy-demo-cid/metadata.json",
+    metadataHash: "0xmetadata",
+    metadata: { name: "Cached DPP" },
+    canonicalJson: '{"name":"Cached DPP"}',
+  };
+  const key = helpers.saveMintedMetadataCache("77", chainState);
+
+  assert.equal(
+    key,
+    `dpp-demo-metadata:${DEPLOYED_SEPOLIA_ADDRESS}:77`,
+  );
+  const cached = structuredClone(helpers.loadMintedMetadataCache("77"));
+  assert.deepEqual(
+    {
+      contractAddress: cached.contractAddress,
+      tokenId: cached.tokenId,
+      tx: cached.tx,
+      tokenURI: cached.tokenURI,
+      metadataHash: cached.metadataHash,
+      metadata: cached.metadata,
+      canonicalJson: cached.canonicalJson,
+      note: cached.note,
+    },
+    {
+      contractAddress: DEPLOYED_SEPOLIA_ADDRESS,
+      tokenId: "77",
+      tx: "0xfeed1234",
+      tokenURI: "ipfs://bafy-demo-cid/metadata.json",
+      metadataHash: "0xmetadata",
+      metadata: { name: "Cached DPP" },
+      canonicalJson: '{"name":"Cached DPP"}',
+      note: "LOCAL_DEMO_CACHE_ONLY_NOT_ON_CHAIN",
+    },
+  );
+  assert.match(cached.savedAt, /^\d{4}-\d{2}-\d{2}T/);
+});
+
+test("chain status UI distinguishes submitted metadata from canonical hash input and on-chain data", () => {
+  assert.match(html, /本次送出的 DPP Metadata JSON/);
+  assert.match(html, /Canonical JSON used for metadataHash/);
+  assert.match(html, /LOCAL_DEMO_CACHE_ONLY_NOT_ON_CHAIN/);
+  assert.match(html, /鏈上只保存 tokenURI、metadataHash 與 DPP record 欄位/);
+  assert.doesNotMatch(html, /鏈上保存完整(?:的)? Metadata JSON/);
+});
+
+test("doSign sends mintDPP through an ethers BrowserProvider and parses the event", () => {
+  assert.match(html, /async\s+function\s+doSign\s*\(/);
+  assert.match(html, /new\s+ethers\.BrowserProvider\s*\(\s*window\.ethereum\s*\)/);
+  assert.match(html, /\.getSigner\s*\(/);
+  assert.match(html, /new\s+ethers\.Contract\s*\(/);
+  assert.match(html, /\.mintDPP\s*\(/);
+  assert.match(html, /await\s+tx\.wait\s*\(/);
+  assert.match(html, /\.parseLog\s*\(/);
+  assert.match(html, /DPPMinted/);
+});
+
+test("the complete inline application boots and handles injected Sepolia switching", async () => {
+  const { context, elements, alerts } = createApplicationContext();
+  vm.runInContext(inlineApplicationSource(), context);
+
+  assert.match(elements.get("main").innerHTML, /首頁/);
+  assert.equal(elements.get("walletButton").textContent, "👛 尚未連線");
+  assert.equal(elements.get("networkStatus").textContent, "網路:未安裝錢包");
+
+  await vm.runInContext("connectWallet()", context);
+  assert.equal(alerts.length, 1);
+  assert.match(alerts[0], /MetaMask、OKX Wallet/);
+
+  let chainId = "0x1";
+  context.ethereum = {
+    on() {},
+    async request({ method, params }) {
+      if (method === "eth_requestAccounts" || method === "eth_accounts") {
+        return ["0x1234567890123456789012345678901234567890"];
+      }
+      if (method === "eth_chainId") return chainId;
+      if (method === "wallet_switchEthereumChain") {
+        assert.equal(params[0].chainId, "0xaa36a7");
+        chainId = "0xaa36a7";
+        return null;
+      }
+      throw new Error(`Unexpected wallet method: ${method}`);
+    },
+  };
+
+  await vm.runInContext("connectWallet()", context);
+  assert.equal(elements.get("walletButton").textContent, "👛 0x1234…7890");
+  assert.equal(elements.get("networkStatus").textContent, "⚠ 錯誤網路 (1)");
+
+  const switched = await vm.runInContext("switchToSepolia()", context);
+  assert.equal(switched, true);
+  assert.equal(elements.get("networkStatus").textContent, "✓ Sepolia");
+});
+
+test("doSign preserves submitted metadata, caches it, and renders the confirmed result", async () => {
+  const { context, elements, localStorageEntries } = createApplicationContext();
+  const account = "0x1234567890123456789012345678901234567890";
+  let constructedContractAddress = null;
+  context.ethereum = {
+    on() {},
+    async request({ method }) {
+      if (method === "eth_accounts" || method === "eth_requestAccounts") {
+        return [account];
+      }
+      if (method === "eth_chainId") return "0xaa36a7";
+      throw new Error(`Unexpected wallet method: ${method}`);
+    },
+  };
+  context.ethers = {
+    ZeroAddress: "0x0000000000000000000000000000000000000000",
+    isAddress() {
+      return true;
+    },
+    toUtf8Bytes(value) {
+      return `utf8:${value}`;
+    },
+    keccak256(value) {
+      return `hash:${value}`;
+    },
+    BrowserProvider: class {
+      async getNetwork() {
+        return { chainId: 11155111n };
+      }
+      async getSigner() {
+        return {
+          async getAddress() {
+            return account;
+          },
+        };
+      }
+    },
+    Contract: class {
+      constructor(address) {
+        constructedContractAddress = address;
+      }
+      interface = {
+        parseLog(log) {
+          if (log.kind !== "DPPMinted") throw new Error("Different event");
+          return { name: "DPPMinted", args: { tokenId: 77n } };
+        },
+      };
+      async mintDPP() {
+        return {
+          hash: "0xfeed1234",
+          async wait() {
+            return { logs: [{ kind: "Transfer" }, { kind: "DPPMinted" }] };
+          },
+        };
+      }
+    },
+  };
+
+  vm.runInContext(inlineApplicationSource(), context);
+  await vm.runInContext("refreshWalletState(false)", context);
+  await vm.runInContext("doSign()", context);
+
+  const chainState = vm.runInContext(
+    "JSON.parse(JSON.stringify(state.chain))",
+    context,
+  );
+  assert.equal(constructedContractAddress, DEPLOYED_SEPOLIA_ADDRESS);
+  assert.equal(chainState.metadata.name, "Evergreen DPP #A2207 · dye-fnsh");
+  assert.equal(
+    chainState.canonicalJson,
+    vm.runInContext("stableStringify(state.chain.metadata)", context),
+  );
+  assert.equal(
+    chainState.metadataCacheKey,
+    `dpp-demo-metadata:${DEPLOYED_SEPOLIA_ADDRESS}:77`,
+  );
+  const cached = JSON.parse(
+    localStorageEntries.get(chainState.metadataCacheKey),
+  );
+  assert.equal(cached.note, "LOCAL_DEMO_CACHE_ONLY_NOT_ON_CHAIN");
+  assert.equal(cached.metadata.name, chainState.metadata.name);
+  assert.equal(cached.canonicalJson, chainState.canonicalJson);
+  assert.match(elements.get("main").innerHTML, /0xfeed1234/);
+  assert.match(elements.get("main").innerHTML, /#77/);
+  assert.match(elements.get("main").innerHTML, /已確認/);
+  assert.match(elements.get("main").innerHTML, /本次送出的 DPP Metadata JSON/);
+  assert.match(elements.get("main").innerHTML, /Canonical JSON used for metadataHash/);
+});
