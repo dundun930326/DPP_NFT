@@ -195,6 +195,7 @@ test("frontend defaults to the local real-IPFS upload backend", () => {
     html,
     /const\s+IPFS_UPLOAD_ENDPOINT\s*=\s*['"]http:\/\/localhost:3001\/upload-metadata['"]/,
   );
+  assert.match(html, /if\s*\(\s*USE_MOCK_IPFS\s*===\s*true\s*\)/);
 });
 
 test("frontend targets the deployed SimpleDPPNFT contract on Sepolia", () => {
@@ -303,6 +304,8 @@ test("real IPFS mode posts metadata to the local backend", async () => {
     cid: "bafy-real-cid",
     tokenURI: "ipfs://bafy-real-cid",
     gatewayURL: "https://gateway.example/ipfs/bafy-real-cid",
+    uploadMode: "real backend",
+    uploadEndpoint: "http://localhost:3001/upload-metadata",
   });
 });
 
@@ -314,6 +317,8 @@ test("explicit mock IPFS mode returns the deterministic demo URI", async () => {
     cid: "bafy-demo-cid",
     tokenURI: "ipfs://bafy-demo-cid/metadata.json",
     gatewayURL: null,
+    uploadMode: "mock",
+    uploadEndpoint: null,
   });
 });
 
@@ -332,6 +337,28 @@ test("real IPFS mode rejects backend errors without a fake URI fallback", async 
   await assert.rejects(
     helpers.uploadMetadataToIPFS({ name: "test" }),
     /PINATA_JWT is not configured/,
+  );
+});
+
+test("real IPFS mode rejects a demo CID returned by the backend", async () => {
+  const helpers = loadMetadataHelpers([], {
+    useMockIpfs: false,
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      async json() {
+        return {
+          cid: "bafy-demo-cid",
+          tokenURI: "ipfs://bafy-demo-cid/metadata.json",
+          gatewayURL: null,
+        };
+      },
+    }),
+  });
+
+  await assert.rejects(
+    helpers.uploadMetadataToIPFS({ name: "test" }),
+    /rejected the demo CID/,
   );
 });
 
@@ -400,6 +427,12 @@ test("chain status UI distinguishes submitted metadata from canonical hash input
   assert.match(html, /鏈上只保存 tokenURI、metadataHash 與 DPP record 欄位/);
   assert.doesNotMatch(html, /鏈上保存完整(?:的)? Metadata JSON/);
   assert.match(html, /IPFS tokenURI.*metadataHash.*source of truth/);
+  assert.match(html, /IPFS mode:/);
+  assert.match(html, /Upload endpoint:/);
+  assert.match(html, /Backend status:/);
+  assert.match(html, /CID:/);
+  assert.match(html, /Gateway URL:/);
+  assert.doesNotMatch(html, /目前 IPFS upload 仍為 mock/);
 });
 
 test("doSign sends mintDPP through an ethers BrowserProvider and parses the event", () => {
@@ -536,7 +569,14 @@ test("doSign preserves submitted metadata, caches it, and renders the confirmed 
   );
   assert.equal(constructedContractAddress, DEPLOYED_SEPOLIA_ADDRESS);
   assert.equal(mintArguments[1], "ipfs://bafy-real-cid");
+  assert.equal(chainState.cid, "bafy-real-cid");
   assert.equal(chainState.gatewayURL, "https://gateway.example/ipfs/bafy-real-cid");
+  assert.equal(chainState.uploadMode, "real backend");
+  assert.equal(
+    chainState.uploadEndpoint,
+    "http://localhost:3001/upload-metadata",
+  );
+  assert.equal(chainState.backendStatus, "upload succeeded");
   assert.equal(chainState.metadata.name, "Evergreen DPP #A2207 · dye-fnsh");
   assert.equal(
     chainState.canonicalJson,
@@ -557,4 +597,76 @@ test("doSign preserves submitted metadata, caches it, and renders the confirmed 
   assert.match(elements.get("main").innerHTML, /已確認/);
   assert.match(elements.get("main").innerHTML, /本次送出的 DPP Metadata JSON/);
   assert.match(elements.get("main").innerHTML, /Canonical JSON used for metadataHash/);
+  assert.match(elements.get("main").innerHTML, /IPFS mode:<b>real backend<\/b>/);
+  assert.match(elements.get("main").innerHTML, /Backend status:<b>upload succeeded<\/b>/);
+  assert.match(elements.get("main").innerHTML, /CID:<code>bafy-real-cid<\/code>/);
+  assert.match(elements.get("main").innerHTML, /metadata was uploaded through the local Pinata proxy/i);
+  assert.doesNotMatch(elements.get("main").innerHTML, /bafy-demo-cid/);
+  assert.doesNotMatch(elements.get("main").innerHTML, /IPFS upload 仍為 mock/);
+});
+
+test("real upload failure stops before contract minting", async () => {
+  const { context, elements } = createApplicationContext();
+  const account = "0x1234567890123456789012345678901234567890";
+  let mintCallCount = 0;
+
+  context.fetch = async () => {
+    throw new Error("backend offline");
+  };
+  context.ethereum = {
+    on() {},
+    async request({ method }) {
+      if (method === "eth_accounts" || method === "eth_requestAccounts") {
+        return [account];
+      }
+      if (method === "eth_chainId") return "0xaa36a7";
+      throw new Error(`Unexpected wallet method: ${method}`);
+    },
+  };
+  context.ethers = {
+    ZeroAddress: "0x0000000000000000000000000000000000000000",
+    isAddress() {
+      return true;
+    },
+    toUtf8Bytes(value) {
+      return `utf8:${value}`;
+    },
+    keccak256(value) {
+      return `hash:${value}`;
+    },
+    BrowserProvider: class {
+      async getNetwork() {
+        return { chainId: 11155111n };
+      }
+      async getSigner() {
+        return {
+          async getAddress() {
+            return account;
+          },
+        };
+      }
+    },
+    Contract: class {
+      async mintDPP() {
+        mintCallCount += 1;
+        throw new Error("mintDPP must not be called");
+      }
+    },
+  };
+
+  vm.runInContext(inlineApplicationSource(), context);
+  await vm.runInContext("refreshWalletState(false)", context);
+  await vm.runInContext("doSign()", context);
+
+  const chainState = vm.runInContext(
+    "JSON.parse(JSON.stringify(state.chain))",
+    context,
+  );
+  assert.equal(mintCallCount, 0);
+  assert.equal(chainState.status, "error");
+  assert.equal(chainState.backendStatus, "upload failed");
+  assert.equal(chainState.tx, null);
+  assert.equal(chainState.tokenURI, null);
+  assert.doesNotMatch(JSON.stringify(chainState), /bafy-demo-cid/);
+  assert.match(elements.get("main").innerHTML, /Backend status:<b>upload failed<\/b>/);
 });

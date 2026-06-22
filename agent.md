@@ -77,6 +77,30 @@ tokenURI: ipfs://bafkreieicej26ntgzs3lzcggfsp6gzlhzvqwtebjxkj2rlnx5pcnxntuoy
 
 The configured Pinata gateway returned HTTP `200` for that CID.
 
+## Progress Entry: Real IPFS Runtime Diagnostics
+
+On 2026-06-21, a successful Sepolia mint was reported with the old demo URI
+`ipfs://bafy-demo-cid/metadata.json`. The displayed sentence
+`目前 IPFS upload 仍為 mock` and the demo URI both exactly matched the older
+frontend in commit `6b59692`, not the real-upload frontend in commit `1a70ce9`.
+This indicates that the browser was serving or caching an old
+`factory-endpoint.html`.
+
+The frontend now makes the active runtime path visible before and after minting:
+
+- frontend build identifier
+- IPFS mode (`real backend` or `mock`)
+- upload endpoint
+- backend status (`not tested`, `upload succeeded`, or `upload failed`)
+- CID
+- token URI
+- gateway URL
+
+Real mode stores the backend response in chain-status state and rejects the demo
+CID. If the local upload backend fails, the frontend stops before
+`contract.mintDPP()` and shows a readable error. The mock URI is reachable only
+through the explicit `USE_MOCK_IPFS === true` branch.
+
 ## Files Changed
 
 - `factory-endpoint.html`
@@ -254,11 +278,29 @@ npm install
 npm start
 ```
 
+Before opening the browser, test the backend directly:
+
+```bash
+curl -s -X POST http://localhost:3001/upload-metadata \
+  -H "Content-Type: application/json" \
+  -d '{"name":"DPP test","description":"hello pinata"}'
+```
+
+Expected success:
+
+```json
+{
+  "cid": "...",
+  "tokenURI": "ipfs://..."
+}
+```
+
 ### Run the static frontend
 
 In a second terminal:
 
 ```bash
+cd /Users/dunnnnn/Homework/DPP
 python3 -m http.server 3000
 ```
 
@@ -267,6 +309,27 @@ Open:
 ```text
 http://localhost:3000/factory-endpoint.html
 ```
+
+The Python server must be started from `/Users/dunnnnn/Homework/DPP`; otherwise
+port `3000` may serve a different copy of `factory-endpoint.html`.
+
+Before testing a new mint, force refresh the browser with:
+
+```text
+Cmd + Shift + R
+```
+
+Alternatively, open DevTools → Network and enable **Disable cache**, then reload.
+On the boundary or chain-status page, confirm the runtime diagnostic shows:
+
+```text
+IPFS mode: real backend
+Upload endpoint: http://localhost:3001/upload-metadata
+Backend status: not tested
+```
+
+After metadata upload succeeds, `Backend status` must change to
+`upload succeeded` and the CID must not be `bafy-demo-cid`.
 
 For Codex-local validation under this project's conda policy:
 
@@ -318,8 +381,8 @@ npm test
 Result on 2026-06-21:
 
 ```text
-tests 18
-pass 18
+tests 20
+pass 20
 fail 0
 ```
 
@@ -343,19 +406,30 @@ Additional evidence:
 - The chain-status UI rendered both pretty metadata JSON and canonical JSON.
 - Frontend real mode posted metadata to `/upload-metadata` and passed the
   returned IPFS URI into `mintDPP`.
+- Confirmed real-mode state and result UI contain the backend-returned CID,
+  token URI, gateway URL, upload endpoint, and `upload succeeded` status.
+- A simulated real-backend connection failure left the transaction hash empty
+  and did not call `mintDPP`.
 - Explicit mock mode retained the deterministic offline result.
 - Backend tests verified missing-JWT rejection and a successful mocked Pinata
   response without contacting Pinata.
 - A real local-backend-to-Pinata upload returned CID
   `bafkreieicej26ntgzs3lzcggfsp6gzlhzvqwtebjxkj2rlnx5pcnxntuoy`.
+- The documented troubleshooting upload command returned CID
+  `bafkreigs4bjamxyzkxnmnppd37twwbvsr5qa5z535zalox5yujrbdoisu4` through the
+  configured local proxy.
 - The configured gateway returned HTTP `200` for the uploaded metadata.
+- A fresh project-root static server returned the updated
+  `factory-endpoint.html`; the browser visibly showed build
+  `2026-06-21-real-ipfs-diagnostics-v1`, `IPFS mode: real backend`, the
+  localhost upload endpoint, and `Backend status: not tested`.
+- The fresh browser page produced no console errors.
 - Secret scan matches were documentation, prohibitions, or test fixture text;
   no credential was found.
 
-The in-app browser refused localhost navigation under its URL policy, so a
-visual browser-extension run was not completed in this session. The contract
-deployment is recorded from the project owner's successful Sepolia deployment;
-this session did not independently submit a deployment or mint transaction.
+The contract deployment is recorded from the project owner's successful
+Sepolia deployment. This debugging session did not submit another mint
+transaction because wallet approval remains an explicit user action.
 
 ## Validation Checklist
 
@@ -370,6 +444,11 @@ this session did not independently submit a deployment or mint transaction.
 - [x] Mock token URI is generated.
 - [x] Real mode calls the local metadata upload endpoint.
 - [x] Real upload failures stop before fake-URI minting.
+- [x] Real mode rejects `bafy-demo-cid` if an upload service returns it.
+- [x] Runtime diagnostics identify the frontend build, upload mode, endpoint,
+      backend status, CID, token URI, and gateway URL.
+- [x] Automated failure-path validation confirms `mintDPP()` is not called when
+      the real upload fails.
 - [x] Backend rejects upload when `PINATA_JWT` is missing.
 - [x] Backend maps a mocked Pinata CID to `ipfs://CID`.
 - [x] Frontend targets deployed contract
@@ -384,10 +463,13 @@ this session did not independently submit a deployment or mint transaction.
 - [x] UI explains that IPFS plus metadataHash is the source of truth,
       localStorage is a convenience cache, and full JSON is not on-chain.
 - [x] No private key, mnemonic, API key, or service secret is present.
-- [ ] Real browser extension approval has been tested manually.
+- [x] The project owner reported a successful browser-wallet approval and
+      Sepolia mint for token `#5`; that mint used the stale mock frontend.
 - [x] Sepolia contract deployment was completed and supplied by the project
       owner.
-- [ ] A real Sepolia mint transaction has been completed from this frontend.
+- [x] A real Sepolia mint transaction was completed from the older cached
+      frontend; a fresh real-IPFS mint remains to be repeated after force
+      refresh.
 - [ ] MetaMask or OKX Wallet transaction confirmation has been observed in this
       session.
 - [x] A real Pinata upload was performed through the local backend with the
@@ -409,9 +491,10 @@ this session did not independently submit a deployment or mint transaction.
 
 ## Recommended Next Steps
 
-1. Configure a local Pinata JWT and perform one real metadata upload.
-2. Run one funded-wallet mint and verify the gateway metadata against
-   `metadataHash` and the Etherscan transaction.
+1. Start both servers from `/Users/dunnnnn/Homework/DPP`, force refresh, and
+   verify the visible runtime diagnostics before signing.
+2. Run one new funded-wallet mint in `real backend` mode and verify the gateway
+   metadata against `metadataHash` and the Etherscan transaction.
 3. Add the future “My DPP NFTs” read flow with IPFS and local-cache fallback.
 4. Replace demo encryption with an explicit cryptographic design.
 5. Add issuer access control and contract tests before production use.
