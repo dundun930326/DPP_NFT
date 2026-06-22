@@ -43,6 +43,7 @@ function loadMetadataHelpers(
     CONTRACT_ADDRESS: DEPLOYED_SEPOLIA_ADDRESS,
     USE_MOCK_IPFS: useMockIpfs,
     IPFS_UPLOAD_ENDPOINT: "http://localhost:3001/upload-metadata",
+    IPFS_METADATA_FETCH_ENDPOINT: "http://localhost:3001/fetch-metadata",
     DPP_SCHEMA: "dpp-dye-fnsh-v1",
     DPP_ORDER: "#A2207",
     DPP_STAGE: "dye-fnsh",
@@ -78,6 +79,8 @@ this.stableStringify = stableStringify;
 this.buildMetadataJson = buildMetadataJson;
 this.computeDPPHashes = computeDPPHashes;
 this.uploadMetadataToIPFS = uploadMetadataToIPFS;
+this.fetchMetadataFromIPFS = typeof fetchMetadataFromIPFS === 'function' ? fetchMetadataFromIPFS : undefined;
+this.verifyMetadataHash = typeof verifyMetadataHash === 'function' ? verifyMetadataHash : undefined;
 this.metadataCacheKey = typeof metadataCacheKey === 'function' ? metadataCacheKey : undefined;
 this.saveMintedMetadataCache = typeof saveMintedMetadataCache === 'function' ? saveMintedMetadataCache : undefined;
 this.loadMintedMetadataCache = typeof loadMintedMetadataCache === 'function' ? loadMintedMetadataCache : undefined;`,
@@ -157,6 +160,125 @@ function createApplicationContext() {
   return { context, elements, alerts, localStorageEntries };
 }
 
+function installControlledMintScenario(
+  context,
+  { readMode = "match", emitTokenId = true } = {},
+) {
+  const account = "0x1234567890123456789012345678901234567890";
+  let uploadedMetadata = null;
+  let metadataFetchCount = 0;
+  let mintCallCount = 0;
+
+  context.fetch = async (url, options) => {
+    if (url === "http://localhost:3001/upload-metadata") {
+      uploadedMetadata = JSON.parse(options.body);
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            cid: "bafy-real-cid",
+            tokenURI: "ipfs://bafy-real-cid",
+            gatewayURL: "https://gateway.example/ipfs/bafy-real-cid",
+          };
+        },
+      };
+    }
+    if (
+      url.startsWith(
+        "http://localhost:3001/fetch-metadata?tokenURI=",
+      )
+    ) {
+      metadataFetchCount += 1;
+      if (readMode === "failure") {
+        throw new Error("gateway unavailable");
+      }
+      const metadata =
+        readMode === "mismatch"
+          ? { ...uploadedMetadata, name: "Tampered DPP" }
+          : uploadedMetadata;
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            metadata,
+            source: "ipfs",
+            tokenURI: "ipfs://bafy-real-cid",
+            gatewayURL: "https://gateway.example/ipfs/bafy-real-cid",
+            fetchedAt: "2026-06-22T00:00:00.000Z",
+          };
+        },
+      };
+    }
+    throw new Error(`Unexpected fetch URL: ${url}`);
+  };
+  context.ethereum = {
+    on() {},
+    async request({ method }) {
+      if (method === "eth_accounts" || method === "eth_requestAccounts") {
+        return [account];
+      }
+      if (method === "eth_chainId") return "0xaa36a7";
+      throw new Error(`Unexpected wallet method: ${method}`);
+    },
+  };
+  context.ethers = {
+    ZeroAddress: "0x0000000000000000000000000000000000000000",
+    isAddress() {
+      return true;
+    },
+    toUtf8Bytes(value) {
+      return `utf8:${value}`;
+    },
+    keccak256(value) {
+      return `hash:${value}`;
+    },
+    BrowserProvider: class {
+      async getNetwork() {
+        return { chainId: 11155111n };
+      }
+      async getSigner() {
+        return {
+          async getAddress() {
+            return account;
+          },
+        };
+      }
+    },
+    Contract: class {
+      interface = {
+        parseLog(log) {
+          if (log.kind !== "DPPMinted") throw new Error("Different event");
+          return { name: "DPPMinted", args: { tokenId: 77n } };
+        },
+      };
+      async mintDPP() {
+        mintCallCount += 1;
+        return {
+          hash: "0xfeed1234",
+          async wait() {
+            return {
+              logs: emitTokenId
+                ? [{ kind: "DPPMinted" }]
+                : [{ kind: "Transfer" }],
+            };
+          },
+        };
+      }
+    },
+  };
+
+  return {
+    get metadataFetchCount() {
+      return metadataFetchCount;
+    },
+    get mintCallCount() {
+      return mintCallCount;
+    },
+  };
+}
+
 test("Solidity contract stores and emits every requested DPP field", () => {
   assert.match(contract, /contract\s+SimpleDPPNFT\s+is\s+ERC721URIStorage/);
   assert.match(contract, /struct\s+DPPRecord\s*{[\s\S]*bytes32\s+metadataHash;/);
@@ -196,6 +318,10 @@ test("frontend defaults to the local real-IPFS upload backend", () => {
     /const\s+IPFS_UPLOAD_ENDPOINT\s*=\s*['"]http:\/\/localhost:3001\/upload-metadata['"]/,
   );
   assert.match(html, /if\s*\(\s*USE_MOCK_IPFS\s*===\s*true\s*\)/);
+  assert.match(
+    html,
+    /const\s+IPFS_METADATA_FETCH_ENDPOINT\s*=\s*['"]http:\/\/localhost:3001\/fetch-metadata['"]/,
+  );
 });
 
 test("frontend targets the deployed SimpleDPPNFT contract on Sepolia", () => {
@@ -362,6 +488,65 @@ test("real IPFS mode rejects a demo CID returned by the backend", async () => {
   );
 });
 
+test("frontend fetches metadata through the local IPFS read endpoint", async () => {
+  let request = null;
+  const helpers = loadMetadataHelpers([], {
+    fetchImpl: async (url, options) => {
+      request = { url, options };
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            metadata: { name: "Fetched DPP" },
+            source: "ipfs",
+            tokenURI: "ipfs://bafy-test/path/file.json",
+            gatewayURL:
+              "https://gateway.example/ipfs/bafy-test/path/file.json",
+            fetchedAt: "2026-06-22T00:00:00.000Z",
+          };
+        },
+      };
+    },
+  });
+
+  const result = await helpers.fetchMetadataFromIPFS(
+    "ipfs://bafy-test/path/file.json",
+  );
+
+  assert.equal(
+    request.url,
+    "http://localhost:3001/fetch-metadata?tokenURI=ipfs%3A%2F%2Fbafy-test%2Fpath%2Ffile.json",
+  );
+  assert.equal(request.options, undefined);
+  assert.deepEqual(structuredClone(result), {
+    metadata: { name: "Fetched DPP" },
+    source: "ipfs",
+    tokenURI: "ipfs://bafy-test/path/file.json",
+    gatewayURL:
+      "https://gateway.example/ipfs/bafy-test/path/file.json",
+    fetchedAt: "2026-06-22T00:00:00.000Z",
+  });
+});
+
+test("metadata verification reuses stableStringify and keccak256", () => {
+  const helpers = loadMetadataHelpers([]);
+  const metadata = { z: 2, a: { y: 3, x: 1 } };
+  const expectedHash =
+    'keccak256(utf8:{"a":{"x":1,"y":3},"z":2})';
+
+  const verification = structuredClone(
+    helpers.verifyMetadataHash(metadata, expectedHash.toUpperCase()),
+  );
+
+  assert.deepEqual(verification, {
+    canonicalJson: '{"a":{"x":1,"y":3},"z":2}',
+    computedHash: expectedHash,
+    expectedHash: expectedHash.toUpperCase(),
+    matches: true,
+  });
+});
+
 test("computeDPPHashes hashes canonical metadata and the fixed DPP identifiers", () => {
   const helpers = loadMetadataHelpers([]);
   const hashes = helpers.computeDPPHashes({ z: 2, a: 1 });
@@ -489,17 +674,37 @@ test("doSign preserves submitted metadata, caches it, and renders the confirmed 
   const account = "0x1234567890123456789012345678901234567890";
   let constructedContractAddress = null;
   let mintArguments = null;
+  let uploadedMetadata = null;
   context.fetch = async (url, options) => {
-    assert.equal(url, "http://localhost:3001/upload-metadata");
-    assert.equal(options.method, "POST");
+    if (url === "http://localhost:3001/upload-metadata") {
+      assert.equal(options.method, "POST");
+      uploadedMetadata = JSON.parse(options.body);
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            cid: "bafy-real-cid",
+            tokenURI: "ipfs://bafy-real-cid",
+            gatewayURL: "https://gateway.example/ipfs/bafy-real-cid",
+          };
+        },
+      };
+    }
+    assert.match(
+      url,
+      /^http:\/\/localhost:3001\/fetch-metadata\?tokenURI=/,
+    );
     return {
       ok: true,
       status: 200,
       async json() {
         return {
-          cid: "bafy-real-cid",
+          metadata: uploadedMetadata,
+          source: "ipfs",
           tokenURI: "ipfs://bafy-real-cid",
           gatewayURL: "https://gateway.example/ipfs/bafy-real-cid",
+          fetchedAt: "2026-06-22T00:00:00.000Z",
         };
       },
     };
@@ -577,6 +782,14 @@ test("doSign preserves submitted metadata, caches it, and renders the confirmed 
     "http://localhost:3001/upload-metadata",
   );
   assert.equal(chainState.backendStatus, "upload succeeded");
+  assert.equal(chainState.passportStatus, "verified-ipfs");
+  assert.equal(chainState.metadataSource, "ipfs");
+  assert.equal(chainState.fetchedMetadata.name, chainState.metadata.name);
+  assert.equal(chainState.metadataVerification.matches, true);
+  assert.equal(
+    chainState.metadataGatewayURL,
+    "https://gateway.example/ipfs/bafy-real-cid",
+  );
   assert.equal(chainState.metadata.name, "Evergreen DPP #A2207 · dye-fnsh");
   assert.equal(
     chainState.canonicalJson,
@@ -603,6 +816,76 @@ test("doSign preserves submitted metadata, caches it, and renders the confirmed 
   assert.match(elements.get("main").innerHTML, /metadata was uploaded through the local Pinata proxy/i);
   assert.doesNotMatch(elements.get("main").innerHTML, /bafy-demo-cid/);
   assert.doesNotMatch(elements.get("main").innerHTML, /IPFS upload 仍為 mock/);
+});
+
+test("confirmed mint preserves IPFS hash mismatch without cache substitution", async () => {
+  const { context } = createApplicationContext();
+  const scenario = installControlledMintScenario(context, {
+    readMode: "mismatch",
+  });
+  context.cacheReadCount = 0;
+
+  vm.runInContext(inlineApplicationSource(), context);
+  vm.runInContext(
+    "loadMintedMetadataCache=()=>{cacheReadCount+=1;return {metadata:{name:'Cached'}};}",
+    context,
+  );
+  await vm.runInContext("refreshWalletState(false)", context);
+  await vm.runInContext("doSign()", context);
+
+  const chainState = vm.runInContext(
+    "JSON.parse(JSON.stringify(state.chain))",
+    context,
+  );
+  assert.equal(scenario.metadataFetchCount, 1);
+  assert.equal(scenario.mintCallCount, 1);
+  assert.equal(chainState.passportStatus, "hash-mismatch");
+  assert.equal(chainState.metadataSource, "ipfs");
+  assert.equal(chainState.metadataVerification.matches, false);
+  assert.equal(context.cacheReadCount, 0);
+});
+
+test("confirmed mint uses clearly labeled local cache only after IPFS failure", async () => {
+  const { context } = createApplicationContext();
+  const scenario = installControlledMintScenario(context, {
+    readMode: "failure",
+  });
+
+  vm.runInContext(inlineApplicationSource(), context);
+  await vm.runInContext("refreshWalletState(false)", context);
+  await vm.runInContext("doSign()", context);
+
+  const chainState = vm.runInContext(
+    "JSON.parse(JSON.stringify(state.chain))",
+    context,
+  );
+  assert.equal(scenario.metadataFetchCount, 1);
+  assert.equal(chainState.passportStatus, "local-cache-fallback");
+  assert.equal(chainState.metadataSource, "local-cache-fallback");
+  assert.equal(chainState.metadataVerification.matches, true);
+  assert.match(chainState.metadataFetchError, /metadata 服務|unavailable/i);
+});
+
+test("confirmed mint keeps chain proof and marks Passport unavailable when no source exists", async () => {
+  const { context, elements } = createApplicationContext();
+  const scenario = installControlledMintScenario(context, {
+    readMode: "failure",
+    emitTokenId: false,
+  });
+
+  vm.runInContext(inlineApplicationSource(), context);
+  await vm.runInContext("refreshWalletState(false)", context);
+  await vm.runInContext("doSign()", context);
+
+  const chainState = vm.runInContext(
+    "JSON.parse(JSON.stringify(state.chain))",
+    context,
+  );
+  assert.equal(scenario.metadataFetchCount, 1);
+  assert.equal(chainState.status, "confirmed");
+  assert.equal(chainState.passportStatus, "unavailable");
+  assert.equal(chainState.tx, "0xfeed1234");
+  assert.match(elements.get("main").innerHTML, /0xfeed1234/);
 });
 
 test("real upload failure stops before contract minting", async () => {

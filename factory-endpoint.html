@@ -156,6 +156,7 @@ const SEPOLIA_CHAIN_ID = 11155111;
 const SEPOLIA_CHAIN_HEX = '0xaa36a7';
 const USE_MOCK_IPFS = false;
 const IPFS_UPLOAD_ENDPOINT = 'http://localhost:3001/upload-metadata';
+const IPFS_METADATA_FETCH_ENDPOINT = 'http://localhost:3001/fetch-metadata';
 const FRONTEND_BUILD_ID = '2026-06-21-real-ipfs-diagnostics-v1';
 const DPP_SCHEMA = 'dpp-dye-fnsh-v1';
 const DPP_ORDER = '#A2207';
@@ -442,6 +443,34 @@ async function uploadMetadataToIPFS(metadata){
     uploadEndpoint:IPFS_UPLOAD_ENDPOINT
   };
 }
+async function fetchMetadataFromIPFS(tokenURI){
+  const url=`${IPFS_METADATA_FETCH_ENDPOINT}?tokenURI=${encodeURIComponent(tokenURI)}`;
+  let response;
+  try{
+    response=await fetch(url);
+  }catch(error){
+    console.error('IPFS metadata backend connection failed:',error);
+    throw new Error(`無法連接本機 IPFS metadata 服務 (${IPFS_METADATA_FETCH_ENDPOINT})。`);
+  }
+  const result=await response.json().catch(()=>null);
+  if(!response.ok){
+    throw new Error(result?.error||`IPFS metadata fetch failed (HTTP ${response.status}).`);
+  }
+  if(!result?.metadata || result.source!=='ipfs'){
+    throw new Error('IPFS metadata service returned an invalid response.');
+  }
+  return result;
+}
+function verifyMetadataHash(metadata,expectedHash){
+  const canonicalJson=stableStringify(metadata);
+  const computedHash=ethers.keccak256(ethers.toUtf8Bytes(canonicalJson));
+  return {
+    canonicalJson,
+    computedHash,
+    expectedHash,
+    matches:computedHash.toLowerCase()===String(expectedHash).toLowerCase()
+  };
+}
 function metadataCacheKey(tokenId){
   return `dpp-demo-metadata:${CONTRACT_ADDRESS}:${tokenId}`;
 }
@@ -474,6 +503,41 @@ function loadMintedMetadataCache(tokenId){
     console.warn('Unable to load local DPP metadata cache:',error);
     return null;
   }
+}
+async function loadConfirmedPassport(){
+  const c=state.chain;
+  c.passportStatus='loading';
+  c.fetchedMetadata=null;
+  c.metadataSource=null;
+  c.metadataGatewayURL=null;
+  c.metadataFetchedAt=null;
+  c.metadataVerification=null;
+  c.metadataFetchError=null;
+  render();
+  try{
+    const fetched=await fetchMetadataFromIPFS(c.tokenURI);
+    c.fetchedMetadata=fetched.metadata;
+    c.metadataSource=fetched.source;
+    c.metadataGatewayURL=fetched.gatewayURL||null;
+    c.metadataFetchedAt=fetched.fetchedAt||null;
+    c.metadataVerification=verifyMetadataHash(fetched.metadata,c.metadataHash);
+    c.passportStatus=c.metadataVerification.matches?'verified-ipfs':'hash-mismatch';
+  }catch(error){
+    console.error('DPP Passport IPFS fetch failed:',error);
+    c.metadataFetchError=walletErrorMessage(error,'IPFS metadata is unavailable.');
+    const cached=c.tokenId?loadMintedMetadataCache(c.tokenId):null;
+    if(cached?.metadata){
+      c.fetchedMetadata=cached.metadata;
+      c.metadataSource='local-cache-fallback';
+      c.metadataGatewayURL=null;
+      c.metadataFetchedAt=cached.savedAt||null;
+      c.metadataVerification=verifyMetadataHash(cached.metadata,c.metadataHash);
+      c.passportStatus='local-cache-fallback';
+    }else{
+      c.passportStatus='unavailable';
+    }
+  }
+  render();
 }
 /*
 TODO: Future "My DPP NFTs" metadata read priority:
@@ -804,7 +868,10 @@ async function doSign(){
     uploadMode:USE_MOCK_IPFS===true?'mock':'real backend',
     uploadEndpoint:USE_MOCK_IPFS===true?null:IPFS_UPLOAD_ENDPOINT,
     backendStatus:'not tested',
-    metadata:null,canonicalJson:null,metadataCacheKey:null
+    metadata:null,canonicalJson:null,metadataCacheKey:null,
+    passportStatus:null,fetchedMetadata:null,metadataSource:null,
+    metadataGatewayURL:null,metadataFetchedAt:null,
+    metadataVerification:null,metadataFetchError:null
   };
   go('chain');
   try{
@@ -898,6 +965,7 @@ async function doSign(){
     state.chain.message=tokenId?`DPP NFT #${tokenId} 已確認。`:'交易已確認,但未能解析 DPPMinted event。';
     render();
     toast(state.chain.message);
+    await loadConfirmedPassport();
   }catch(error){
     console.error('DPP mint failed:',error);
     state.chain.status='error';
